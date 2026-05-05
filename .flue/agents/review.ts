@@ -1,4 +1,5 @@
 import type { FlueContext, FlueEvent, FlueEventCallback } from '@flue/sdk';
+import { createWriteStream } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as v from 'valibot';
@@ -75,44 +76,46 @@ function summarizeEventArgs(value: unknown): string {
 	return keys.length > 0 ? keys.join(', ') : 'started';
 }
 
-function logEvent(event: FlueEvent): void {
+function formatEventMessage(event: FlueEvent, useColor: boolean): string | null {
+	const paint = (text: string, ...codes: string[]) => (useColor ? colorize(text, ...codes) : text);
+
 	switch (event.type) {
 		case 'task_start':
-			console.log(
-				`${colorize('Task:', BOLD, MAGENTA)} ${event.role ?? 'default'}${event.cwd ? ` ${colorize(`@ ${event.cwd}`, DIM)}` : ''}`,
-			);
-			break;
+			return `${paint('Task:', BOLD, MAGENTA)} ${event.role ?? 'default'}${event.cwd ? ` ${paint(`@ ${event.cwd}`, DIM)}` : ''}`;
 		case 'task_end':
-			console.log(
-				`${colorize('Task finished:', BOLD, MAGENTA)} ${event.isError ? colorize('error', RED) : colorize('ok', GREEN)}`,
-			);
-			break;
+			return `${paint('Task finished:', BOLD, MAGENTA)} ${event.isError ? paint('error', RED) : paint('ok', GREEN)}`;
 		case 'tool_start':
-			console.log(
-				`${colorize('Tool:', BOLD, CYAN)} ${colorize(event.toolName, CYAN)} ${colorize('-', DIM)} ${summarizeEventArgs(event.args)}`,
-			);
-			break;
+			return `${paint('Tool:', BOLD, CYAN)} ${paint(event.toolName, CYAN)} ${paint('-', DIM)} ${summarizeEventArgs(event.args)}`;
 		case 'tool_end':
 			if (event.isError) {
-				console.log(`${colorize('Tool failed:', BOLD, RED)} ${event.toolName}`);
+				return `${paint('Tool failed:', BOLD, RED)} ${event.toolName}`;
 			}
-			break;
+			return null;
 		case 'command_start':
-			console.log(
-				`${colorize('Command:', BOLD, BLUE)} ${`${event.command} ${event.args.join(' ')}`.trim()}`,
-			);
-			break;
+			return `${paint('Command:', BOLD, BLUE)} ${`${event.command} ${event.args.join(' ')}`.trim()}`;
 		case 'command_end':
-			console.log(
-				`${colorize('Command exit:', BOLD, BLUE)} ${event.command} (${event.exitCode === 0 ? colorize(String(event.exitCode), GREEN) : colorize(String(event.exitCode), RED)})`,
-			);
-			break;
+			return `${paint('Command exit:', BOLD, BLUE)} ${event.command} (${event.exitCode === 0 ? paint(String(event.exitCode), GREEN) : paint(String(event.exitCode), RED)})`;
 		case 'error':
-			console.log(`${colorize('Agent error:', BOLD, RED)} ${event.error}`);
-			break;
+			return `${paint('Agent error:', BOLD, RED)} ${event.error}`;
 		default:
-			break;
+			return null;
 	}
+}
+
+function createEventLogger(logFilePath: string): FlueEventCallback {
+	const stream = createWriteStream(logFilePath, { flags: 'a' });
+
+	return (event) => {
+		const screenMessage = formatEventMessage(event, true);
+		if (screenMessage) {
+			console.log(screenMessage);
+		}
+
+		const fileMessage = formatEventMessage(event, false);
+		if (fileMessage) {
+			stream.write(`${fileMessage}\n`);
+		}
+	};
 }
 
 function createRunId(startedAt: Date, seed?: string): string {
@@ -141,11 +144,14 @@ async function initializeRunArtifacts(
 ): Promise<{
 	runDir: string;
 	dataDir: string;
+	logFilePath: string;
 	manifestPath: string;
 }> {
 	const runDir = path.join(process.cwd(), '.review-runs', runId);
 	const dataDir = path.join(runDir, 'data');
+	const logsDir = path.join(dataDir, 'logs');
 	await mkdir(dataDir, { recursive: true });
+	await mkdir(logsDir, { recursive: true });
 
 	const manifestPath = path.join(dataDir, 'manifest.json');
 	await writeJson(manifestPath, {
@@ -160,22 +166,22 @@ async function initializeRunArtifacts(
 	});
 	await writeJson(path.join(dataDir, 'collect.json'), collect);
 
-	return { runDir, dataDir, manifestPath };
+	return { runDir, dataDir, logFilePath: path.join(logsDir, 'session.log'), manifestPath };
 }
 
 export default async function (ctx: FlueContext) {
 	const internalCtx = ctx as InternalFlueContext;
-	internalCtx.setEventCallback?.(logEvent);
 	const startedAt = new Date();
 	const runId = createRunId(startedAt, ctx.id);
 	const root = '/workspace';
-	const exclude = ['dist', 'node_modules', '.git', 'coverage', '.env'];
+	const exclude = ['dist', 'node_modules', '.git', 'coverage', '.env', '.agents/skills/skill-creator'];
 	const focus = ['bugs', 'security', 'performance', 'code-quality'];
 	const collectSummary = await collectFilesWithSummary({
 		root: process.cwd(),
 		exclude,
 	});
-	const { runDir, dataDir, manifestPath } = await initializeRunArtifacts(runId, startedAt, collectSummary);
+	const { runDir, dataDir, logFilePath, manifestPath } = await initializeRunArtifacts(runId, startedAt, collectSummary);
+	internalCtx.setEventCallback?.(createEventLogger(logFilePath));
 
 	const agent = await ctx.init({
 		sandbox: 'local',
