@@ -1,5 +1,13 @@
 import type { FlueContext, FlueEvent, FlueEventCallback } from '@flue/sdk';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import * as v from 'valibot';
+import {
+	collectFilesWithSummary,
+	type CollectFilesResult,
+} from '../../.agents/skills/code-review/scripts/collect_files';
+import { generateReport } from '../../.agents/skills/code-review/scripts/generate_report';
+import { printResults } from '../lib/print-results';
 
 export const triggers = { webhook: true };
 
@@ -19,7 +27,18 @@ const reviewResultSchema = v.object({
 });
 
 type ReviewResult = v.InferOutput<typeof reviewResultSchema>;
-type ReviewIssue = ReviewResult['issues'][number];
+type ReviewResponse = ReviewResult & {
+	reportMarkdown: string;
+	runId: string;
+	runDir: string;
+};
+type ReviewScreenResponse = {
+	runId: string;
+	runDir: string;
+	score: number;
+	issuesFound: number;
+	summary: string;
+};
 
 type InternalFlueContext = FlueContext & {
 	setEventCallback?: (callback: FlueEventCallback | undefined) => void;
@@ -30,35 +49,12 @@ const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
 const RED = '\x1b[31m';
 const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
 const BLUE = '\x1b[34m';
 const MAGENTA = '\x1b[35m';
 const CYAN = '\x1b[36m';
-const BRIGHT_RED = '\x1b[91m';
-const BRIGHT_YELLOW = '\x1b[93m';
 
 function colorize(text: string, ...codes: string[]): string {
 	return `${codes.join('')}${text}${RESET}`;
-}
-
-function severityColor(severity: ReviewIssue['severity']): string {
-	switch (severity) {
-		case 'critical':
-			return BRIGHT_RED;
-		case 'high':
-			return RED;
-		case 'medium':
-			return BRIGHT_YELLOW;
-		case 'low':
-			return GREEN;
-	}
-}
-
-function scoreColor(score: number): string {
-	if (score >= 85) return GREEN;
-	if (score >= 70) return YELLOW;
-	if (score >= 50) return BRIGHT_YELLOW;
-	return RED;
 }
 
 function summarizeEventArgs(value: unknown): string {
@@ -119,42 +115,67 @@ function logEvent(event: FlueEvent): void {
 	}
 }
 
-function printResults(result: ReviewResult): void {
-	const separator = '='.repeat(50);
-	console.log(`\n${colorize(separator, DIM)}`);
-	console.log(colorize('REVIEW RESULTS', BOLD, CYAN));
-	console.log(`${colorize(separator, DIM)}\n`);
+function createRunId(startedAt: Date, seed?: string): string {
+	const year = startedAt.getUTCFullYear();
+	const month = String(startedAt.getUTCMonth() + 1).padStart(2, '0');
+	const day = String(startedAt.getUTCDate()).padStart(2, '0');
+	const hours = String(startedAt.getUTCHours()).padStart(2, '0');
+	const minutes = String(startedAt.getUTCMinutes()).padStart(2, '0');
+	const seconds = String(startedAt.getUTCSeconds()).padStart(2, '0');
+	const timestamp = `${year}${month}${day}-${hours}${minutes}${seconds}`;
+	const normalized = seed
+		? seed.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+		: '';
 
-	console.log(`${colorize('Score:', BOLD)} ${colorize(`${result.score}/100`, BOLD, scoreColor(result.score))}`);
-	console.log(`${colorize('Issues Found:', BOLD)} ${result.issues.length}\n`);
-	console.log(`${colorize('Summary:', BOLD)} ${result.summary}\n`);
+	return normalized ? `${timestamp}-${normalized}` : timestamp;
+}
 
-	const severities: ReviewIssue['severity'][] = ['critical', 'high', 'medium', 'low'];
-	for (const severity of severities) {
-		const issues = result.issues.filter((issue) => issue.severity === severity);
-		if (issues.length === 0) continue;
+async function writeJson(filePath: string, value: unknown): Promise<void> {
+	await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
 
-		console.log(colorize(`${severity.toUpperCase()} (${issues.length})`, BOLD, severityColor(severity)));
-		console.log(colorize('-'.repeat(30), DIM));
+async function initializeRunArtifacts(
+	runId: string,
+	startedAt: Date,
+	collect: CollectFilesResult,
+): Promise<{
+	runDir: string;
+	dataDir: string;
+	manifestPath: string;
+}> {
+	const runDir = path.join(process.cwd(), '.review-runs', runId);
+	const dataDir = path.join(runDir, 'data');
+	await mkdir(dataDir, { recursive: true });
 
-		for (const issue of issues) {
-			const location = issue.line == null ? issue.file : `${issue.file}:${issue.line}`;
-			console.log(
-				`\n${colorize(`[${issue.category}]`, BOLD, severityColor(severity))} ${colorize(location, BOLD)}`,
-			);
-			console.log(`  ${issue.description}`);
-			if (issue.suggestion) {
-				console.log(`  ${colorize('Suggestion:', BOLD)} ${issue.suggestion}`);
-			}
-		}
+	const manifestPath = path.join(dataDir, 'manifest.json');
+	await writeJson(manifestPath, {
+		runId,
+		startedAt: startedAt.toISOString(),
+		repo: path.basename(process.cwd()),
+		phases: {
+			collect: 'complete',
+			review: 'pending',
+			report: 'pending',
+		},
+	});
+	await writeJson(path.join(dataDir, 'collect.json'), collect);
 
-		console.log();
-	}
+	return { runDir, dataDir, manifestPath };
 }
 
 export default async function (ctx: FlueContext) {
 	const internalCtx = ctx as InternalFlueContext;
 	internalCtx.setEventCallback?.(logEvent);
+	const startedAt = new Date();
+	const runId = createRunId(startedAt, ctx.id);
+	const root = '/workspace';
+	const exclude = ['dist', 'node_modules', '.git', 'coverage', '.env'];
+	const focus = ['bugs', 'security', 'performance', 'code-quality'];
+	const collectSummary = await collectFilesWithSummary({
+		root: process.cwd(),
+		exclude,
+	});
+	const { runDir, dataDir, manifestPath } = await initializeRunArtifacts(runId, startedAt, collectSummary);
 
 	const agent = await ctx.init({
 		sandbox: 'local',
@@ -162,25 +183,47 @@ export default async function (ctx: FlueContext) {
 	});
 	const session = await agent.session();
 
-	const files = await session.shell(
-		"rg --files -g '!node_modules/**' -g '!dist/**' -g '!.git/**' -g '!coverage/**' -g '!*.min.*' -g '!.env' -g '!*.lock' -g '!*.log'",
-	);
-	if (files.exitCode === 0) {
-		const count = files.stdout.split('\n').filter(Boolean).length;
-		console.log(`${colorize('Reviewing', BOLD, CYAN)} ${count} files under ${colorize('/workspace', BOLD)}...`);
-	} else {
-		console.log(`${colorize('Reviewing', BOLD, CYAN)} all code under ${colorize('/workspace', BOLD)}...`);
-	}
-
 	const result = await session.skill('code-review', {
 		args: {
-			root: '/workspace',
-			exclude: ['dist', 'node_modules', '.git', 'coverage', '.env'],
-			focus: ['bugs', 'security', 'performance', 'code-quality'],
+			root,
+			exclude,
+			focus,
+			candidateFiles: collectSummary.files,
 		},
 		result: reviewResultSchema,
 	});
 
-	printResults(result);
-	return result;
+	const response: ReviewResponse = {
+		...result,
+		reportMarkdown: generateReport(result),
+		runId,
+		runDir,
+	};
+
+	await writeJson(path.join(dataDir, 'findings.json'), result);
+	await writeJson(path.join(dataDir, 'report.json'), response);
+	await writeFile(path.join(runDir, 'summary.md'), `${response.reportMarkdown}\n`, 'utf8');
+	await writeJson(manifestPath, {
+		runId,
+		startedAt: collectSummary.collectedAt,
+		completedAt: new Date().toISOString(),
+		repo: path.basename(process.cwd()),
+		phases: {
+			collect: 'complete',
+			review: 'complete',
+			report: 'complete',
+		},
+	});
+
+	printResults(response, { mode: 'verbose' });
+
+	const screenResponse: ReviewScreenResponse = {
+		runId: response.runId,
+		runDir: response.runDir,
+		score: response.score,
+		issuesFound: response.issues.length,
+		summary: response.summary,
+	};
+
+	return screenResponse;
 }
