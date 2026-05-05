@@ -5,17 +5,17 @@ export const triggers = { webhook: true };
 
 const reviewIssueSchema = v.object({
 	severity: v.picklist(['low', 'medium', 'high', 'critical']),
-	category: v.picklist(['bug', 'security', 'performance', 'style']),
+	category: v.string(),
 	file: v.string(),
-	line: v.nullable(v.number()),
+	line: v.optional(v.nullable(v.number())),
 	description: v.string(),
-	suggestion: v.nullable(v.string()),
+	suggestion: v.optional(v.nullable(v.string())),
 });
 
 const reviewResultSchema = v.object({
 	issues: v.array(reviewIssueSchema),
 	summary: v.string(),
-	overallScore: v.number(),
+	score: v.number(),
 });
 
 type ReviewResult = v.InferOutput<typeof reviewResultSchema>;
@@ -125,7 +125,7 @@ function printResults(result: ReviewResult): void {
 	console.log(colorize('REVIEW RESULTS', BOLD, CYAN));
 	console.log(`${colorize(separator, DIM)}\n`);
 
-	console.log(`${colorize('Score:', BOLD)} ${colorize(`${result.overallScore}/100`, BOLD, scoreColor(result.overallScore))}`);
+	console.log(`${colorize('Score:', BOLD)} ${colorize(`${result.score}/100`, BOLD, scoreColor(result.score))}`);
 	console.log(`${colorize('Issues Found:', BOLD)} ${result.issues.length}\n`);
 	console.log(`${colorize('Summary:', BOLD)} ${result.summary}\n`);
 
@@ -172,23 +172,14 @@ export default async function (ctx: FlueContext) {
 		console.log(`${colorize('Reviewing', BOLD, CYAN)} all code under ${colorize('/workspace', BOLD)}...`);
 	}
 
-	const result = await session.prompt(
-		`Review all source code under the current project root, including files in nested directories.
-
-Focus on:
-1. Bugs and potential crashes
-2. Security vulnerabilities
-3. Performance issues
-4. Code quality improvements
-
-Search recursively through the project unless a file or directory is clearly generated or vendored.
-Never read, inspect, or report on anything under /workspace/dist or ./dist. Treat that directory as out of scope.
-Be specific about file names and line numbers.
-Return only material issues. If there are no issues, return an empty issues array with a brief summary and a high score.`,
-		{
-			result: reviewResultSchema,
+	const result = await session.skill('code-review', {
+		args: {
+			root: '/workspace',
+			exclude: ['dist', 'node_modules', '.git', 'coverage', '.env'],
+			focus: ['bugs', 'security', 'performance', 'code-quality'],
 		},
-	);
+		result: reviewResultSchema,
+	});
 
 	printResults(result);
 	return result;
