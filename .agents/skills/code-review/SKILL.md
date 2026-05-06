@@ -34,6 +34,10 @@ Use this confidence bar before reporting:
 
 When in doubt, read more files. Never guess.
 
+Confidence answers whether something is a real bug worth reporting.
+Severity answers how serious that bug is after you decide it is real.
+First filter by confidence, then assign severity using `.agents/skills/code-review/references/severity-rules.md`.
+
 ## Process
 
 1. Discover relevant source files under `root`.
