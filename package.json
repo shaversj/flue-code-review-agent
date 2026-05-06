@@ -4,7 +4,9 @@
   "description": "",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "check:types": "tsc -p . --noEmit"
+    "check:types": "tsc -p . --noEmit",
+    "eval:stability": "node .flue/evals/eval-stability.mjs",
+    "eval:golden": "node .flue/evals/eval-golden-latest.mjs"
   },
   "keywords": [],
   "author": "",

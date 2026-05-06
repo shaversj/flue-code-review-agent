@@ -1,6 +1,6 @@
 import type { FlueContext, FlueEvent, FlueEventCallback } from '@flue/sdk';
 import { createWriteStream } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import * as v from 'valibot';
 import {
@@ -8,6 +8,7 @@ import {
 	type CollectFilesResult,
 } from '../../.agents/skills/code-review/scripts/collect_files';
 import { generateReport } from '../../.agents/skills/code-review/scripts/generate_report';
+import { normalizeReviewResult } from '../lib/normalize-review';
 import { printResults } from '../lib/print-results';
 
 export const triggers = { webhook: true };
@@ -137,6 +138,18 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
 	await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+async function loadSourceFiles(files: string[]): Promise<Map<string, string[]>> {
+	const sourceFiles = new Map<string, string[]>();
+
+	for (const file of files) {
+		const absolutePath = path.join(process.cwd(), file);
+		const contents = await readFile(absolutePath, 'utf8');
+		sourceFiles.set(file, contents.split(/\r?\n/));
+	}
+
+	return sourceFiles;
+}
+
 async function initializeRunArtifacts(
 	runId: string,
 	startedAt: Date,
@@ -174,7 +187,7 @@ export default async function (ctx: FlueContext) {
 	const startedAt = new Date();
 	const runId = createRunId(startedAt, ctx.id);
 	const root = '/workspace';
-	const exclude = ['dist', 'node_modules', '.git', 'coverage', '.env', '.agents/skills/skill-creator'];
+	const exclude = ['dist', 'node_modules', '.git', 'coverage', '.env', '.agents', '.flue', 'package.json'];
 	const focus = ['bugs', 'security', 'performance', 'code-quality'];
 	const collectSummary = await collectFilesWithSummary({
 		root: process.cwd(),
@@ -198,15 +211,17 @@ export default async function (ctx: FlueContext) {
 		},
 		result: reviewResultSchema,
 	});
+	const sourceFiles = await loadSourceFiles(collectSummary.files);
+	const normalizedResult = normalizeReviewResult(result, sourceFiles);
 
 	const response: ReviewResponse = {
-		...result,
-		reportMarkdown: generateReport(result),
+		...normalizedResult,
+		reportMarkdown: generateReport(normalizedResult),
 		runId,
 		runDir,
 	};
 
-	await writeJson(path.join(dataDir, 'findings.json'), result);
+	await writeJson(path.join(dataDir, 'findings.json'), normalizedResult);
 	await writeJson(path.join(dataDir, 'report.json'), response);
 	await writeFile(path.join(runDir, 'summary.md'), `${response.reportMarkdown}\n`, 'utf8');
 	await writeJson(manifestPath, {

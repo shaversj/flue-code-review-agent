@@ -8,7 +8,7 @@ export type CollectFilesOptions = {
 
 type SkippedPath = {
 	path: string;
-	reason: 'excluded' | 'sensitive' | 'generated';
+	reason: 'excluded' | 'sensitive' | 'generated' | 'non-code';
 };
 
 export type CollectFilesResult = {
@@ -45,6 +45,41 @@ const SENSITIVE_FILE_NAMES = new Set([
 	'.env.production',
 	'.env.test',
 ]);
+
+const INCLUDED_CODE_EXTENSIONS = new Set([
+	'.c',
+	'.cc',
+	'.cpp',
+	'.cs',
+	'.go',
+	'.java',
+	'.js',
+	'.jsx',
+	'.mjs',
+	'.php',
+	'.py',
+	'.rb',
+	'.rs',
+	'.sql',
+	'.ts',
+	'.tsx',
+]);
+
+const INCLUDED_CODE_FILENAMES = new Set([
+	'Dockerfile',
+	'Makefile',
+]);
+
+function isIncludedCodePath(relativePath: string): boolean {
+	const normalized = relativePath.split(path.sep).join('/');
+	const basename = path.basename(normalized);
+
+	if (INCLUDED_CODE_FILENAMES.has(basename)) {
+		return true;
+	}
+
+	return INCLUDED_CODE_EXTENSIONS.has(path.extname(normalized));
+}
 
 function isExcludedPath(relativePath: string, exclude: string[]): boolean {
 	const normalized = relativePath.split(path.sep).join('/');
@@ -85,6 +120,10 @@ function classifySkippedPath(relativePath: string, exclude: string[]): SkippedPa
 		};
 	}
 
+	if (!isIncludedCodePath(normalized)) {
+		return { path: normalized, reason: 'non-code' };
+	}
+
 	return null;
 }
 
@@ -105,7 +144,9 @@ export async function collectFiles({ root, exclude }: CollectFilesOptions): Prom
 			}
 
 			if (entry.isFile()) {
-				results.push(relativePath.split(path.sep).join('/'));
+				const normalized = relativePath.split(path.sep).join('/');
+				if (!isIncludedCodePath(normalized)) continue;
+				results.push(normalized);
 				continue;
 			}
 
@@ -169,7 +210,7 @@ export async function collectFilesWithSummary(options: CollectFilesOptions): Pro
 			.map((entry) => entry.path)
 			.sort(),
 		generatedPathsSkipped: skippedPaths
-			.filter((entry) => entry.reason === 'generated')
+			.filter((entry) => entry.reason === 'generated' || entry.reason === 'non-code')
 			.map((entry) => entry.path)
 			.sort(),
 		excludedPathsMatchedCount: skippedPaths.filter((entry) => entry.reason === 'excluded').length,
