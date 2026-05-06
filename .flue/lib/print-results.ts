@@ -26,6 +26,7 @@ export type ReviewResultWithReport = {
 
 export type PrintResultsOptions = {
 	mode?: 'compact' | 'verbose';
+	useColor?: boolean;
 	usage?: {
 		numTurns: number;
 		inputTokens: number;
@@ -41,19 +42,6 @@ function colorize(text: string, ...codes: string[]): string {
 	return `${codes.join('')}${text}${RESET}`;
 }
 
-function severityColor(severity: ReviewIssue['severity']): string {
-	switch (severity) {
-		case 'critical':
-			return BRIGHT_RED;
-		case 'high':
-			return RED;
-		case 'medium':
-			return BRIGHT_YELLOW;
-		case 'low':
-			return GREEN;
-	}
-}
-
 function scoreColor(score: number): string {
 	if (score >= 85) return GREEN;
 	if (score >= 70) return YELLOW;
@@ -61,12 +49,14 @@ function scoreColor(score: number): string {
 	return RED;
 }
 
-export function printResults(
+export function formatResults(
 	result: ReviewResultWithReport,
 	options: PrintResultsOptions = {},
-): void {
+): string {
 	const mode = options.mode ?? 'verbose';
+	const useColor = options.useColor ?? true;
 	const separator = '='.repeat(50);
+	const paint = (text: string, ...codes: string[]) => (useColor ? colorize(text, ...codes) : text);
 	const issuesBySeverity: Record<ReviewIssue['severity'], ReviewIssue[]> = {
 		critical: result.issues.filter((issue) => issue.severity === 'critical'),
 		high: result.issues.filter((issue) => issue.severity === 'high'),
@@ -79,27 +69,29 @@ export function printResults(
 		medium: { icon: '🟡', color: BRIGHT_YELLOW },
 		low: { icon: '🟢', color: GREEN },
 	};
+	const lines: string[] = [];
 
-	console.log(`\n${colorize(separator, DIM)}`);
-	console.log(colorize('REVIEW RESULTS', BOLD, CYAN));
-	console.log(`${colorize(separator, DIM)}\n`);
+	lines.push('');
+	lines.push(paint(separator, DIM));
+	lines.push(paint('REVIEW RESULTS', BOLD, CYAN));
+	lines.push(`${paint(separator, DIM)}\n`);
 
-	console.log(`Score: ${colorize(`${result.score}/100`, BOLD, scoreColor(result.score))}`);
-	console.log(`Issues Found: ${result.issues.length}\n`);
-	console.log(`Summary: ${result.summary}\n`);
+	lines.push(`Score: ${paint(`${result.score}/100`, BOLD, scoreColor(result.score))}`);
+	lines.push(`Issues Found: ${result.issues.length}\n`);
+	lines.push(`Summary: ${result.summary}\n`);
 
 	if (options.usage) {
-		console.log('Token Usage:');
-		console.log(`  Turns: ${options.usage.numTurns}`);
-		console.log(`  Input: ${options.usage.inputTokens}`);
-		console.log(`  Output: ${options.usage.outputTokens}`);
-		console.log(`  Cache Write: ${options.usage.cacheCreationInputTokens}`);
-		console.log(`  Cache Read: ${options.usage.cacheReadInputTokens}`);
-		console.log(`  Total: ${options.usage.totalTokens}`);
+		lines.push('Token Usage:');
+		lines.push(`  Turns: ${options.usage.numTurns}`);
+		lines.push(`  Input: ${options.usage.inputTokens}`);
+		lines.push(`  Output: ${options.usage.outputTokens}`);
+		lines.push(`  Cache Write: ${options.usage.cacheCreationInputTokens}`);
+		lines.push(`  Cache Read: ${options.usage.cacheReadInputTokens}`);
+		lines.push(`  Total: ${options.usage.totalTokens}`);
 		if (options.usage.totalCostUsd != null) {
-			console.log(`  Cost (USD): ${options.usage.totalCostUsd.toFixed(6)}`);
+			lines.push(`  Cost (USD): ${options.usage.totalCostUsd.toFixed(6)}`);
 		}
-		console.log();
+		lines.push('');
 	}
 
 	if (mode === 'compact') {
@@ -108,14 +100,14 @@ export function printResults(
 		>) {
 			if (issues.length === 0) continue;
 			const style = severityStyles[severity];
-			console.log(`${colorize(`${style.icon} ${severity.toUpperCase()} (${issues.length})`, BOLD, style.color)}`);
+			lines.push(paint(`${style.icon} ${severity.toUpperCase()} (${issues.length})`, BOLD, style.color));
 			for (const issue of issues) {
 				const location = issue.line == null ? issue.file : `${issue.file}:${issue.line}`;
-				console.log(`  [${issue.category}] ${location}`);
+				lines.push(`  [${issue.category}] ${location}`);
 			}
 		}
-		console.log();
-		return;
+		lines.push('');
+		return lines.join('\n');
 	}
 
 	for (const [severity, issues] of Object.entries(issuesBySeverity) as Array<
@@ -124,18 +116,27 @@ export function printResults(
 		if (issues.length === 0) continue;
 
 		const style = severityStyles[severity];
-		console.log(colorize(`${style.icon} ${severity.toUpperCase()} (${issues.length})`, BOLD, style.color));
-		console.log(colorize('-'.repeat(30), DIM));
+		lines.push(paint(`${style.icon} ${severity.toUpperCase()} (${issues.length})`, BOLD, style.color));
+		lines.push(paint('-'.repeat(30), DIM));
 
 		for (const issue of issues) {
 			const location = issue.line == null ? issue.file : `${issue.file}:${issue.line}`;
-			console.log(`\n${colorize(`[${issue.category}]`, BOLD)} ${location}`);
-			console.log(`  ${issue.description}`);
+			lines.push(`\n${paint(`[${issue.category}]`, BOLD)} ${location}`);
+			lines.push(`  ${issue.description}`);
 			if (issue.suggestion) {
-				console.log(`  Suggestion: ${issue.suggestion}`);
+				lines.push(`  Suggestion: ${issue.suggestion}`);
 			}
 		}
 
-		console.log();
+		lines.push('');
 	}
+
+	return lines.join('\n');
+}
+
+export function printResults(
+	result: ReviewResultWithReport,
+	options: PrintResultsOptions = {},
+): void {
+	console.log(formatResults(result, options));
 }
