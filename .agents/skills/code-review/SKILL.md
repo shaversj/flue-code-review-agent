@@ -48,7 +48,7 @@ First filter by confidence, then assign severity using `.agents/skills/code-revi
 6. Run only the checks relevant to those zones.
 7. Focus on material issues, not style preferences or speculative cleanups.
 8. Be specific about file paths, concrete failure modes, and line numbers when known.
-9. If the repository contains TypeScript or JavaScript, read `.agents/skills/code-review/references/language-checks.md` before finalizing findings.
+9. If the repository contains supported source files, read `.agents/skills/code-review/references/language-checks.md` before finalizing findings.
 10. Read `.agents/skills/code-review/references/severity-rules.md` before assigning severities.
 11. Read `.agents/skills/code-review/references/output-schema.md` before returning the final result.
 12. Before returning a finding, verify that its `line` points at the first relevant source line for the issue rather than a nearby line.
