@@ -13,6 +13,13 @@ import { printResults } from '../lib/print-results';
 
 export const triggers = { webhook: true };
 
+const fixProposalSchema = v.object({
+	fixSummary: v.string(),
+	recommendedDirection: v.string(),
+	verificationHint: v.string(),
+	riskIfIgnored: v.optional(v.nullable(v.string())),
+});
+
 const reviewIssueSchema = v.object({
 	severity: v.picklist(['low', 'medium', 'high', 'critical']),
 	category: v.string(),
@@ -20,6 +27,7 @@ const reviewIssueSchema = v.object({
 	line: v.optional(v.nullable(v.number())),
 	description: v.string(),
 	suggestion: v.optional(v.nullable(v.string())),
+	fixProposal: fixProposalSchema,
 });
 
 const reviewResultSchema = v.object({

@@ -1,4 +1,8 @@
 import { organizeFindings, type Finding } from '../../.agents/skills/code-review/scripts/organize_findings';
+import {
+	hasCompleteFixProposal,
+	normalizeFixProposal,
+} from '../../.agents/skills/code-review/scripts/fix_proposals';
 
 export type ReviewResult = {
 	issues: Finding[];
@@ -203,6 +207,40 @@ function fingerprintDescription(issue: Finding): string {
 		.trim();
 }
 
+function fixProposalSignal(proposal: Finding['fixProposal']): number {
+	return [
+		proposal.fixSummary,
+		proposal.recommendedDirection,
+		proposal.verificationHint,
+		proposal.riskIfIgnored ?? '',
+	].reduce((total, field) => total + field.trim().length, 0);
+}
+
+function canonicalFixProposalText(proposal: Finding['fixProposal']): string {
+	return [
+		proposal.fixSummary,
+		proposal.recommendedDirection,
+		proposal.verificationHint,
+		proposal.riskIfIgnored ?? '',
+	]
+		.map((field) => field.trim())
+		.join('\n');
+}
+
+function shouldReplaceFixProposal(
+	current: Finding['fixProposal'],
+	incoming: Finding['fixProposal'],
+): boolean {
+	const incomingSignal = fixProposalSignal(incoming);
+	const currentSignal = fixProposalSignal(current);
+
+	if (incomingSignal !== currentSignal) {
+		return incomingSignal > currentSignal;
+	}
+
+	return canonicalFixProposalText(incoming).localeCompare(canonicalFixProposalText(current)) > 0;
+}
+
 function dedupeIssues(issues: Finding[]): Finding[] {
 	const deduped: Finding[] = [];
 
@@ -223,6 +261,9 @@ function dedupeIssues(issues: Finding[]): Finding[] {
 			}
 			if ((duplicate.suggestion == null || duplicate.suggestion === '') && issue.suggestion) {
 				duplicate.suggestion = issue.suggestion;
+			}
+			if (shouldReplaceFixProposal(duplicate.fixProposal, issue.fixProposal)) {
+				duplicate.fixProposal = issue.fixProposal;
 			}
 			continue;
 		}
@@ -269,14 +310,25 @@ function dropOvershadowedNoise(issues: Finding[]): Finding[] {
 }
 
 export function normalizeReviewResult(result: ReviewResult, sourceFiles: SourceFileMap): ReviewResult {
-	const normalizedIssues = result.issues.map((issue) => ({
-		...issue,
-		category: isFetchHandlingIssue(issue) ? 'correctness' : normalizeCategory(issue.category),
-		severity: applySeverityPolicy(issue),
-		description: issue.description.trim(),
-		suggestion: issue.suggestion?.trim() || undefined,
-		line: resolveAnchoredLine(issue, sourceFiles),
-	}));
+	const normalizedIssues = result.issues.map((issue) => {
+		const line = resolveAnchoredLine(issue, sourceFiles);
+
+		if (!hasCompleteFixProposal(issue.fixProposal)) {
+			throw new Error(
+				`Review finding at ${issue.file}:${line ?? 'unknown'} is missing complete fix guidance.`,
+			);
+		}
+
+		return {
+			...issue,
+			category: isFetchHandlingIssue(issue) ? 'correctness' : normalizeCategory(issue.category),
+			severity: applySeverityPolicy(issue),
+			description: issue.description.trim(),
+			suggestion: issue.suggestion?.trim() || undefined,
+			fixProposal: normalizeFixProposal(issue.fixProposal),
+			line,
+		};
+	});
 	const cleanedIssues = dropOvershadowedNoise(dedupeIssues(normalizedIssues));
 	const issues = organizeFindings(cleanedIssues);
 
