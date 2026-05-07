@@ -214,7 +214,11 @@ For each finding:
 - include file path and line number when known
 - explain the actual failure mode, not just the pattern name
 - describe the trigger condition clearly
-- include a short concrete fix when it is obvious
+- include `fixProposal.fixSummary`, `fixProposal.recommendedDirection`, and `fixProposal.verificationHint` as required non-empty fields after trimming
+- include `fixProposal.riskIfIgnored` only when it materially helps prioritization
+- keep the guidance advice-oriented and evidence-bound
+- do not draft code or speculate about unsupported architecture
+- every emitted finding must include a complete fix proposal
 
 If no checks fire, report nothing beyond the required empty result.
 

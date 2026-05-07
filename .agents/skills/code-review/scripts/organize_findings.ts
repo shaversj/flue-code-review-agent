@@ -1,3 +1,5 @@
+import type { FixProposal } from './fix_proposals';
+
 export type Finding = {
 	severity: 'low' | 'medium' | 'high' | 'critical';
 	category: string;
@@ -5,6 +7,7 @@ export type Finding = {
 	line?: number | null;
 	description: string;
 	suggestion?: string | null;
+	fixProposal: FixProposal;
 };
 
 const severityOrder: Record<Finding['severity'], number> = {
