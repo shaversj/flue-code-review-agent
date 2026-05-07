@@ -122,15 +122,6 @@ export function formatResults(
 			const location = issue.line == null ? issue.file : `${issue.file}:${issue.line}`;
 			lines.push(`\n${paint(`[${issue.category}]`, BOLD)} ${location}`);
 			lines.push(`  ${oneLine(issue.description)}`);
-			lines.push(`  Fix: ${oneLine(issue.fixProposal.fixSummary)}`);
-			lines.push(`  Direction: ${oneLine(issue.fixProposal.recommendedDirection)}`);
-			lines.push(`  Verify: ${oneLine(issue.fixProposal.verificationHint)}`);
-			if (issue.fixProposal.riskIfIgnored) {
-				lines.push(`  Risk if ignored: ${oneLine(issue.fixProposal.riskIfIgnored)}`);
-			}
-			if (issue.suggestion) {
-				lines.push(`  Suggestion: ${oneLine(issue.suggestion)}`);
-			}
 		}
 
 		lines.push('');
