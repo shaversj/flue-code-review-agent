@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const runsRoot = path.join(process.cwd(), '.review-runs');
+const expectedFixtureFiles = ['example/src/code-with-issues.ts'];
 
 function normalizeText(value) {
 	return value.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -21,15 +22,36 @@ function formatRange(values) {
 	return `${Math.min(...values)}..${Math.max(...values)}`;
 }
 
+function hasCompleteFixProposal(issue) {
+	return Boolean(
+		issue.fixProposal?.fixSummary?.trim() &&
+			issue.fixProposal?.recommendedDirection?.trim() &&
+			issue.fixProposal?.verificationHint?.trim(),
+	);
+}
+
 async function loadRun(runId) {
 	const filePath = path.join(runsRoot, runId, 'data', 'findings.json');
+	const collectPath = path.join(runsRoot, runId, 'data', 'collect.json');
 	try {
-		const contents = await readFile(filePath, 'utf8');
+		const [contents, collectContents] = await Promise.all([
+			readFile(filePath, 'utf8'),
+			readFile(collectPath, 'utf8'),
+		]);
 		const result = JSON.parse(contents);
+		const collect = JSON.parse(collectContents);
+		const files = Array.isArray(collect.files) ? collect.files : [];
+		const isExpectedFixtureRun =
+			files.length === expectedFixtureFiles.length &&
+			files.every((file, index) => file === expectedFixtureFiles[index]);
+		if (!isExpectedFixtureRun) {
+			return null;
+		}
 		return {
 			runId,
 			score: result.score,
 			issues: result.issues,
+			proposalCompleteness: (result.issues ?? []).filter(hasCompleteFixProposal).length,
 		};
 	} catch (error) {
 		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
@@ -54,6 +76,7 @@ async function main() {
 
 	const scoreValues = runs.map((run) => run.score);
 	const issueCounts = runs.map((run) => run.issues.length);
+	const proposalCompletenessValues = runs.map((run) => run.proposalCompleteness);
 	const fingerprints = new Map();
 
 	for (const run of runs) {
@@ -63,12 +86,20 @@ async function main() {
 				count: 0,
 				severities: new Set(),
 				lines: new Set(),
+				completeFixProposal: new Set(),
 			};
 			entry.count += 1;
 			entry.severities.add(issue.severity);
 			if (issue.line != null) {
 				entry.lines.add(issue.line);
 			}
+			entry.completeFixProposal.add(
+				Boolean(
+					issue.fixProposal?.fixSummary?.trim() &&
+						issue.fixProposal?.recommendedDirection?.trim() &&
+						issue.fixProposal?.verificationHint?.trim(),
+				),
+			);
 			fingerprints.set(key, entry);
 		}
 	}
@@ -76,21 +107,28 @@ async function main() {
 	const stable = [...fingerprints.entries()]
 		.map(([key, entry]) => ({
 			key,
+			presenceCount: entry.count,
 			presenceRate: `${entry.count}/${runs.length}`,
 			severities: [...entry.severities].sort().join(','),
 			lines: [...entry.lines].sort((a, b) => a - b).join(',') || '-',
+			fixProposalComplete: [...entry.completeFixProposal]
+				.sort((left, right) => Number(left) - Number(right))
+				.join(',') || '-',
 		}))
-		.sort((left, right) => right.presenceRate.localeCompare(left.presenceRate) || left.key.localeCompare(right.key));
+		.sort((left, right) => right.presenceCount - left.presenceCount || left.key.localeCompare(right.key));
 
 	console.log('Review Stability Summary');
 	console.log(`Runs analyzed: ${runs.length}`);
 	console.log(`Score range: ${formatRange(scoreValues)}`);
 	console.log(`Issue count range: ${formatRange(issueCounts)}`);
+	console.log(`Complete fix proposals per run: ${formatRange(proposalCompletenessValues)}`);
 	console.log('');
 	console.log('Recurring findings:');
 
 	for (const item of stable) {
-		console.log(`- ${item.presenceRate} | ${item.severities} | lines=${item.lines} | ${item.key}`);
+		console.log(
+			`- ${item.presenceRate} | ${item.severities} | lines=${item.lines} | fix=${item.fixProposalComplete} | ${item.key}`,
+		);
 	}
 }
 
