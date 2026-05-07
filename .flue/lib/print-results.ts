@@ -1,3 +1,5 @@
+import type { Finding } from '../../.agents/skills/code-review/scripts/organize_findings';
+
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -8,14 +10,7 @@ const CYAN = '\x1b[36m';
 const BRIGHT_RED = '\x1b[91m';
 const BRIGHT_YELLOW = '\x1b[93m';
 
-export type ReviewIssue = {
-	severity: 'low' | 'medium' | 'high' | 'critical';
-	category: string;
-	file: string;
-	line?: number | null;
-	description: string;
-	suggestion?: string | null;
-};
+export type ReviewIssue = Finding;
 
 export type ReviewResultWithReport = {
 	summary: string;
@@ -47,6 +42,10 @@ function scoreColor(score: number): string {
 	if (score >= 70) return YELLOW;
 	if (score >= 50) return BRIGHT_YELLOW;
 	return RED;
+}
+
+function oneLine(value: string): string {
+	return value.replace(/\s+/g, ' ').trim();
 }
 
 export function formatResults(
@@ -122,9 +121,15 @@ export function formatResults(
 		for (const issue of issues) {
 			const location = issue.line == null ? issue.file : `${issue.file}:${issue.line}`;
 			lines.push(`\n${paint(`[${issue.category}]`, BOLD)} ${location}`);
-			lines.push(`  ${issue.description}`);
+			lines.push(`  ${oneLine(issue.description)}`);
+			lines.push(`  Fix: ${oneLine(issue.fixProposal.fixSummary)}`);
+			lines.push(`  Direction: ${oneLine(issue.fixProposal.recommendedDirection)}`);
+			lines.push(`  Verify: ${oneLine(issue.fixProposal.verificationHint)}`);
+			if (issue.fixProposal.riskIfIgnored) {
+				lines.push(`  Risk if ignored: ${oneLine(issue.fixProposal.riskIfIgnored)}`);
+			}
 			if (issue.suggestion) {
-				lines.push(`  Suggestion: ${issue.suggestion}`);
+				lines.push(`  Suggestion: ${oneLine(issue.suggestion)}`);
 			}
 		}
 

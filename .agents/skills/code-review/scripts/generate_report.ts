@@ -6,6 +6,10 @@ export type ReviewReport = {
 	issues: Finding[];
 };
 
+function oneLine(value: string): string {
+	return value.replace(/\s+/g, ' ').trim();
+}
+
 export function generateReport(result: ReviewReport): string {
 	const lines = [
 		'# Code Review Report',
@@ -26,9 +30,15 @@ export function generateReport(result: ReviewReport): string {
 
 	for (const issue of result.issues) {
 		const location = issue.line == null ? issue.file : `${issue.file}:${issue.line}`;
-		lines.push(`- [${issue.severity}] ${location} (${issue.category}): ${issue.description}`);
+		lines.push(`- [${issue.severity}] ${location} (${issue.category}): ${oneLine(issue.description)}`);
+		lines.push(`  Fix: ${oneLine(issue.fixProposal.fixSummary)}`);
+		lines.push(`  Direction: ${oneLine(issue.fixProposal.recommendedDirection)}`);
+		lines.push(`  Verify: ${oneLine(issue.fixProposal.verificationHint)}`);
+		if (issue.fixProposal.riskIfIgnored) {
+			lines.push(`  Risk if ignored: ${oneLine(issue.fixProposal.riskIfIgnored)}`);
+		}
 		if (issue.suggestion) {
-			lines.push(`  Suggestion: ${issue.suggestion}`);
+			lines.push(`  Suggestion: ${oneLine(issue.suggestion)}`);
 		}
 	}
 
