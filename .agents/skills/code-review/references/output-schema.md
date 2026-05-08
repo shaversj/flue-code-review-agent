@@ -50,7 +50,7 @@ Return JSON in this shape:
 - `fixProposal.riskIfIgnored`: optional, include only when it materially helps prioritization
 - `remediation`: required object with remediation metadata for every issue
 - `remediation.remediationEligibility`: required and must be one of `auto`, `manual`, or `blocked`
-- `remediation.remediationKind`: required and must describe the repair shape
+- `remediation.remediationKind`: required and must be one of `null-guard`, `input-validation`, `bounds-check`, `api-misuse`, `auth-ordering`, or `refactor`
 - `remediation.patchScope`: required and must be one of `single-line`, `single-function`, `single-file`, or `multi-file`
 - `remediation.verificationStrategy`: required and must be one of `unit-test`, `integration-test`, `existing-test-update`, or `typecheck-only`
 - `remediation.groupKey`: required grouping key for related findings
