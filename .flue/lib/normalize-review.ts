@@ -5,11 +5,31 @@ import {
 } from '../../.agents/skills/code-review/scripts/fix_proposals';
 import { normalizeRemediationMetadata } from './remediation-policy';
 
+type RawReviewIssue = Omit<Finding, 'remediation'> & {
+	remediation: {
+		remediationEligibility: string;
+		remediationKind: string;
+		patchScope: string;
+		verificationStrategy: string;
+		groupKey: string;
+		eligibilityRationale?: string | null;
+		blockedReason?: string | null;
+	};
+};
+
+export type RawReviewResult = {
+	issues: RawReviewIssue[];
+	summary: string;
+	score: number;
+};
+
 export type ReviewResult = {
 	issues: Finding[];
 	summary: string;
 	score: number;
 };
+
+type ReviewIssueBase = Omit<Finding, 'remediation'>;
 
 const categoryAliases: Record<string, Finding['category']> = {
 	bug: 'correctness',
@@ -44,7 +64,7 @@ function normalizeCategory(category: string): string {
 	return categoryAliases[normalized] ?? normalized;
 }
 
-function isFetchHandlingIssue(issue: Finding): boolean {
+function isFetchHandlingIssue(issue: ReviewIssueBase): boolean {
 	const text = normalizeText(`${issue.category}\n${issue.description}\n${issue.suggestion ?? ''}`);
 
 	return (
@@ -58,7 +78,7 @@ function isFetchHandlingIssue(issue: Finding): boolean {
 	);
 }
 
-function applySeverityPolicy(issue: Finding): Finding['severity'] {
+function applySeverityPolicy(issue: ReviewIssueBase): Finding['severity'] {
 	const text = normalizeText(`${issue.category}\n${issue.description}\n${issue.suggestion ?? ''}`);
 
 	if (text.includes('sql injection')) {
@@ -117,7 +137,7 @@ function computeScore(issues: Finding[]): number {
 	return Math.max(20, 100 - penalty);
 }
 
-function extractBacktickSnippets(issue: Finding): string[] {
+function extractBacktickSnippets(issue: ReviewIssueBase): string[] {
 	const text = `${issue.description}\n${issue.suggestion ?? ''}`;
 	const matches = [...text.matchAll(/`([^`]+)`/g)];
 
@@ -132,7 +152,7 @@ function findLine(lines: string[], predicate: (line: string) => boolean): number
 	return index >= 0 ? index + 1 : null;
 }
 
-function inferLineFromIssue(issue: Finding, lines: string[]): number | null {
+function inferLineFromIssue(issue: ReviewIssueBase, lines: string[]): number | null {
 	const description = normalizeText(issue.description);
 	const suggestion = normalizeText(issue.suggestion ?? '');
 	const text = `${description}\n${suggestion}`;
@@ -178,7 +198,7 @@ function inferLineFromIssue(issue: Finding, lines: string[]): number | null {
 	return null;
 }
 
-function resolveAnchoredLine(issue: Finding, sourceFiles: SourceFileMap): number | null | undefined {
+function resolveAnchoredLine(issue: ReviewIssueBase, sourceFiles: SourceFileMap): number | null | undefined {
 	const lines = sourceFiles.get(issue.file);
 	if (!lines) return issue.line;
 
@@ -199,7 +219,7 @@ function resolveAnchoredLine(issue: Finding, sourceFiles: SourceFileMap): number
 	return issue.line >= 1 && issue.line <= lines.length ? issue.line : null;
 }
 
-function fingerprintDescription(issue: Finding): string {
+function fingerprintDescription(issue: ReviewIssueBase): string {
 	return normalizeText(issue.description)
 		.replace(/`[^`]+`/g, '')
 		.replace(/[^a-z0-9 ]/g, ' ')
@@ -242,16 +262,56 @@ function shouldReplaceFixProposal(
 	return canonicalFixProposalText(incoming).localeCompare(canonicalFixProposalText(current)) > 0;
 }
 
-function remediationSignal(issue: Finding): number {
+const remediationEligibilityRank: Record<Finding['remediation']['remediationEligibility'], number> = {
+	auto: 3,
+	manual: 2,
+	blocked: 1,
+};
+
+const remediationPatchScopeRank: Record<Finding['remediation']['patchScope'], number> = {
+	'single-line': 4,
+	'single-function': 3,
+	'single-file': 2,
+	'multi-file': 1,
+};
+
+const remediationVerificationRank: Record<Finding['remediation']['verificationStrategy'], number> = {
+	'existing-test-update': 4,
+	'unit-test': 3,
+	'integration-test': 2,
+	'typecheck-only': 1,
+};
+
+function canonicalRemediationText(remediation: Finding['remediation']): string {
 	return [
-		issue.remediation.groupKey,
-		issue.remediation.remediationEligibility,
-		issue.remediation.remediationKind,
-		issue.remediation.patchScope,
-		issue.remediation.verificationStrategy,
-		issue.remediation.eligibilityRationale ?? '',
-		issue.remediation.blockedReason ?? '',
-	].join('\n').trim().length;
+		remediation.groupKey,
+		remediation.remediationEligibility,
+		remediation.remediationKind,
+		remediation.patchScope,
+		remediation.verificationStrategy,
+		remediation.eligibilityRationale ?? '',
+		remediation.blockedReason ?? '',
+	]
+		.map((field) => field.trim())
+		.join('\n');
+}
+
+function shouldReplaceRemediation(current: Finding['remediation'], incoming: Finding['remediation']): boolean {
+	const comparisons = [
+		remediationEligibilityRank[incoming.remediationEligibility] -
+			remediationEligibilityRank[current.remediationEligibility],
+		remediationPatchScopeRank[incoming.patchScope] - remediationPatchScopeRank[current.patchScope],
+		remediationVerificationRank[incoming.verificationStrategy] -
+			remediationVerificationRank[current.verificationStrategy],
+	];
+
+	for (const comparison of comparisons) {
+		if (comparison !== 0) {
+			return comparison > 0;
+		}
+	}
+
+	return canonicalRemediationText(incoming).localeCompare(canonicalRemediationText(current)) > 0;
 }
 
 function dedupeIssues(issues: Finding[]): Finding[] {
@@ -278,7 +338,7 @@ function dedupeIssues(issues: Finding[]): Finding[] {
 			if (shouldReplaceFixProposal(duplicate.fixProposal, issue.fixProposal)) {
 				duplicate.fixProposal = issue.fixProposal;
 			}
-			if (remediationSignal(issue) > remediationSignal(duplicate)) {
+			if (shouldReplaceRemediation(duplicate.remediation, issue.remediation)) {
 				duplicate.remediation = issue.remediation;
 			}
 			continue;
@@ -325,7 +385,7 @@ function dropOvershadowedNoise(issues: Finding[]): Finding[] {
 	});
 }
 
-export function normalizeReviewResult(result: ReviewResult, sourceFiles: SourceFileMap): ReviewResult {
+export function normalizeReviewResult(result: RawReviewResult, sourceFiles: SourceFileMap): ReviewResult {
 	const normalizedIssues = result.issues.map((issue) => {
 		const fixProposal = normalizeFixProposal(issue.fixProposal);
 		const remediation = normalizeRemediationMetadata(issue.remediation, issue.file);

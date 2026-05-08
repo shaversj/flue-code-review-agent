@@ -8,7 +8,10 @@ import {
 	type CollectFilesResult,
 } from '../../.agents/skills/code-review/scripts/collect_files';
 import { generateReport } from '../../.agents/skills/code-review/scripts/generate_report';
-import { normalizeReviewResult } from '../lib/normalize-review';
+import {
+	normalizeReviewResult,
+	type ReviewResult as NormalizedReviewResult,
+} from '../lib/normalize-review';
 import { printResults } from '../lib/print-results';
 
 export const triggers = { webhook: true };
@@ -21,22 +24,10 @@ const fixProposalSchema = v.object({
 });
 
 const remediationSchema = v.object({
-	remediationEligibility: v.picklist(['auto', 'manual', 'blocked']),
-	remediationKind: v.picklist([
-		'null-guard',
-		'input-validation',
-		'bounds-check',
-		'api-misuse',
-		'auth-ordering',
-		'refactor',
-	]),
-	patchScope: v.picklist(['single-line', 'single-function', 'single-file', 'multi-file']),
-	verificationStrategy: v.picklist([
-		'unit-test',
-		'integration-test',
-		'existing-test-update',
-		'typecheck-only',
-	]),
+	remediationEligibility: v.string(),
+	remediationKind: v.string(),
+	patchScope: v.string(),
+	verificationStrategy: v.string(),
 	groupKey: v.string(),
 	eligibilityRationale: v.optional(v.nullable(v.string())),
 	blockedReason: v.optional(v.nullable(v.string())),
@@ -59,8 +50,8 @@ const reviewResultSchema = v.object({
 	score: v.number(),
 });
 
-type ReviewResult = v.InferOutput<typeof reviewResultSchema>;
-type ReviewResponse = ReviewResult & {
+type RawReviewResult = v.InferOutput<typeof reviewResultSchema>;
+type ReviewResponse = NormalizedReviewResult & {
 	reportMarkdown: string;
 	runId: string;
 	runDir: string;
@@ -233,7 +224,7 @@ export default async function (ctx: FlueContext) {
 	});
 	const session = await agent.session();
 
-	const result = await session.skill('code-review', {
+	const result: RawReviewResult = await session.skill('code-review', {
 		args: {
 			root,
 			exclude,

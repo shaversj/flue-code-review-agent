@@ -15,6 +15,16 @@ const kindFallback: RemediationKind = 'refactor';
 const patchScopeFallback: PatchScope = 'multi-file';
 const verificationFallback: VerificationStrategy = 'existing-test-update';
 
+export type RawRemediationMetadata = {
+	remediationEligibility?: string | null;
+	remediationKind?: string | null;
+	patchScope?: string | null;
+	verificationStrategy?: string | null;
+	groupKey?: string | null;
+	eligibilityRationale?: string | null;
+	blockedReason?: string | null;
+};
+
 function includesKnownValue<T extends readonly string[]>(value: string, allowed: T): value is T[number] {
 	return (allowed as readonly string[]).includes(value);
 }
@@ -29,7 +39,7 @@ export function normalizeGroupKey(
 }
 
 export function normalizeRemediationMetadata(
-	input: Partial<RemediationMetadata> | null | undefined,
+	input: RawRemediationMetadata | null | undefined,
 	file: string,
 ): RemediationMetadata {
 	const eligibility = cleanSupportText(input?.remediationEligibility);
