@@ -8,6 +8,14 @@ const patchScopeRank = {
 	'multi-file': 4,
 } as const;
 
+function buildSkipReason(finding: Finding): string {
+	return (
+		finding.remediation.eligibilityRationale ??
+		finding.remediation.blockedReason ??
+		'Finding was not marked auto-eligible.'
+	);
+}
+
 export function buildRemediationGroups(findings: Finding[]): {
 	groups: RemediationGroup[];
 	skipped: Array<{ file: string; line?: number | null; reason: string }>;
@@ -18,7 +26,7 @@ export function buildRemediationGroups(findings: Finding[]): {
 		.map((finding) => ({
 			file: finding.file,
 			line: finding.line,
-			reason: finding.remediation.blockedReason ?? 'Finding was not marked auto-eligible.',
+			reason: buildSkipReason(finding),
 		}));
 
 	const buckets = new Map<string, Finding[]>();
@@ -42,7 +50,25 @@ export function buildRemediationGroups(findings: Finding[]): {
 				: current;
 		}, firstFinding.remediation.patchScope);
 
-		if (files.length > 3 || widestScope === 'multi-file') {
+		if (files.length > 3) {
+			skipped.push(
+				...bucket.map((finding) => ({
+					file: finding.file,
+					line: finding.line,
+					reason: 'Auto-eligible finding was not planned because its remediation group spans more than 3 files.',
+				})),
+			);
+			return [];
+		}
+
+		if (widestScope === 'multi-file') {
+			skipped.push(
+				...bucket.map((finding) => ({
+					file: finding.file,
+					line: finding.line,
+					reason: 'Auto-eligible finding was not planned because its remediation group requires a multi-file patch scope.',
+				})),
+			);
 			return [];
 		}
 
