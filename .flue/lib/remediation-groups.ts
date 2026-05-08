@@ -49,7 +49,7 @@ export function buildRemediationGroups(findings: Finding[]): {
 		return [
 			{
 				id: `group-${index + 1}`,
-				groupKey: key,
+				groupKey: firstFinding.remediation.groupKey,
 				remediationKind: firstFinding.remediation.remediationKind,
 				verificationStrategy: firstFinding.remediation.verificationStrategy,
 				files,
