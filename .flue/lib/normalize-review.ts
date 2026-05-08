@@ -3,6 +3,7 @@ import {
 	hasCompleteFixProposal,
 	normalizeFixProposal,
 } from '../../.agents/skills/code-review/scripts/fix_proposals';
+import { normalizeRemediationMetadata } from './remediation-policy';
 
 export type ReviewResult = {
 	issues: Finding[];
@@ -241,6 +242,18 @@ function shouldReplaceFixProposal(
 	return canonicalFixProposalText(incoming).localeCompare(canonicalFixProposalText(current)) > 0;
 }
 
+function remediationSignal(issue: Finding): number {
+	return [
+		issue.remediation.groupKey,
+		issue.remediation.remediationEligibility,
+		issue.remediation.remediationKind,
+		issue.remediation.patchScope,
+		issue.remediation.verificationStrategy,
+		issue.remediation.eligibilityRationale ?? '',
+		issue.remediation.blockedReason ?? '',
+	].join('\n').trim().length;
+}
+
 function dedupeIssues(issues: Finding[]): Finding[] {
 	const deduped: Finding[] = [];
 
@@ -264,6 +277,9 @@ function dedupeIssues(issues: Finding[]): Finding[] {
 			}
 			if (shouldReplaceFixProposal(duplicate.fixProposal, issue.fixProposal)) {
 				duplicate.fixProposal = issue.fixProposal;
+			}
+			if (remediationSignal(issue) > remediationSignal(duplicate)) {
+				duplicate.remediation = issue.remediation;
 			}
 			continue;
 		}
@@ -311,9 +327,11 @@ function dropOvershadowedNoise(issues: Finding[]): Finding[] {
 
 export function normalizeReviewResult(result: ReviewResult, sourceFiles: SourceFileMap): ReviewResult {
 	const normalizedIssues = result.issues.map((issue) => {
+		const fixProposal = normalizeFixProposal(issue.fixProposal);
+		const remediation = normalizeRemediationMetadata(issue.remediation, issue.file);
 		const line = resolveAnchoredLine(issue, sourceFiles);
 
-		if (!hasCompleteFixProposal(issue.fixProposal)) {
+		if (!hasCompleteFixProposal(fixProposal)) {
 			throw new Error(
 				`Review finding at ${issue.file}:${line ?? 'unknown'} is missing complete fix guidance.`,
 			);
@@ -325,7 +343,8 @@ export function normalizeReviewResult(result: ReviewResult, sourceFiles: SourceF
 			severity: applySeverityPolicy(issue),
 			description: issue.description.trim(),
 			suggestion: issue.suggestion?.trim() || undefined,
-			fixProposal: normalizeFixProposal(issue.fixProposal),
+			fixProposal,
+			remediation,
 			line,
 		};
 	});

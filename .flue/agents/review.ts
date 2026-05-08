@@ -20,6 +20,28 @@ const fixProposalSchema = v.object({
 	riskIfIgnored: v.optional(v.nullable(v.string())),
 });
 
+const remediationSchema = v.object({
+	remediationEligibility: v.picklist(['auto', 'manual', 'blocked']),
+	remediationKind: v.picklist([
+		'null-guard',
+		'input-validation',
+		'bounds-check',
+		'api-misuse',
+		'auth-ordering',
+		'refactor',
+	]),
+	patchScope: v.picklist(['single-line', 'single-function', 'single-file', 'multi-file']),
+	verificationStrategy: v.picklist([
+		'unit-test',
+		'integration-test',
+		'existing-test-update',
+		'typecheck-only',
+	]),
+	groupKey: v.string(),
+	eligibilityRationale: v.optional(v.nullable(v.string())),
+	blockedReason: v.optional(v.nullable(v.string())),
+});
+
 const reviewIssueSchema = v.object({
 	severity: v.picklist(['low', 'medium', 'high', 'critical']),
 	category: v.string(),
@@ -28,6 +50,7 @@ const reviewIssueSchema = v.object({
 	description: v.string(),
 	suggestion: v.optional(v.nullable(v.string())),
 	fixProposal: fixProposalSchema,
+	remediation: remediationSchema,
 });
 
 const reviewResultSchema = v.object({
