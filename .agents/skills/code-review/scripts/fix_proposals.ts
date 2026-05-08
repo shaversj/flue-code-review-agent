@@ -5,23 +5,27 @@ export type FixProposal = {
 	riskIfIgnored?: string | null;
 };
 
-function cleanText(value: string | null | undefined): string {
+export function cleanSupportText(value: string | null | undefined): string {
 	return (value ?? '').trim();
+}
+
+export function cleanOptionalSupportText(value: string | null | undefined): string | null {
+	return cleanSupportText(value) || null;
 }
 
 export function normalizeFixProposal(input: Partial<FixProposal> | null | undefined): FixProposal {
 	return {
-		fixSummary: cleanText(input?.fixSummary),
-		recommendedDirection: cleanText(input?.recommendedDirection),
-		verificationHint: cleanText(input?.verificationHint),
-		riskIfIgnored: cleanText(input?.riskIfIgnored) || null,
+		fixSummary: cleanSupportText(input?.fixSummary),
+		recommendedDirection: cleanSupportText(input?.recommendedDirection),
+		verificationHint: cleanSupportText(input?.verificationHint),
+		riskIfIgnored: cleanOptionalSupportText(input?.riskIfIgnored),
 	};
 }
 
 export function hasCompleteFixProposal(proposal: Partial<FixProposal> | null | undefined): boolean {
-	const fixSummary = cleanText(proposal?.fixSummary);
-	const recommendedDirection = cleanText(proposal?.recommendedDirection);
-	const verificationHint = cleanText(proposal?.verificationHint);
+	const fixSummary = cleanSupportText(proposal?.fixSummary);
+	const recommendedDirection = cleanSupportText(proposal?.recommendedDirection);
+	const verificationHint = cleanSupportText(proposal?.verificationHint);
 
 	return (
 		fixSummary.length > 0 &&

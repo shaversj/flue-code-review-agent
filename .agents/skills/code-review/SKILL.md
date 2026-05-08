@@ -215,6 +215,10 @@ For each finding:
 - explain the actual failure mode, not just the pattern name
 - describe the trigger condition clearly
 - include `fixProposal.fixSummary`, `fixProposal.recommendedDirection`, and `fixProposal.verificationHint` as required non-empty fields after trimming
+- include `remediation.remediationEligibility`, `remediation.remediationKind`, `remediation.patchScope`, `remediation.verificationStrategy`, and `remediation.groupKey`
+- only mark `remediation.remediationEligibility` as `auto` when the code shows a bounded, evidence-backed fix path
+- use `manual` when the issue is real but the repair path is unclear
+- use `blocked` only when the issue should not enter automatic remediation at all
 - include `fixProposal.riskIfIgnored` only when it materially helps prioritization
 - keep the guidance advice-oriented and evidence-bound
 - do not draft code or speculate about unsupported architecture

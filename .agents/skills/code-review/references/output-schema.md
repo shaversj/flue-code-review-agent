@@ -18,6 +18,14 @@ Return JSON in this shape:
         "fixSummary": "Add a defensive check before dereferencing payload.user.",
         "recommendedDirection": "Return early or branch to a fallback path when payload.user is missing.",
         "verificationHint": "Run the failing path with payloads that omit user and confirm it no longer throws."
+      },
+      "remediation": {
+        "remediationEligibility": "auto",
+        "remediationKind": "null-guard",
+        "patchScope": "single-function",
+        "verificationStrategy": "unit-test",
+        "groupKey": "null-guard:src/example.ts",
+        "eligibilityRationale": "The failure is local to one dereference site and can be verified with a targeted unit test."
       }
     }
   ]
@@ -40,6 +48,14 @@ Return JSON in this shape:
 - `fixProposal.recommendedDirection`: required and non-empty after trimming; the advice-oriented direction to take
 - `fixProposal.verificationHint`: required and non-empty after trimming; how to confirm the fix works
 - `fixProposal.riskIfIgnored`: optional, include only when it materially helps prioritization
+- `remediation`: required object with remediation metadata for every issue
+- `remediation.remediationEligibility`: required and must be one of `auto`, `manual`, or `blocked`
+- `remediation.remediationKind`: required and must describe the repair shape
+- `remediation.patchScope`: required and must be one of `single-line`, `single-function`, `single-file`, or `multi-file`
+- `remediation.verificationStrategy`: required and must be one of `unit-test`, `integration-test`, `existing-test-update`, or `typecheck-only`
+- `remediation.groupKey`: required grouping key for related findings
+- `remediation.eligibilityRationale`: optional, include when it helps explain why a finding is auto-remediable or not
+- `remediation.blockedReason`: optional, include when a finding is blocked from automated remediation
 
 ## Output discipline
 

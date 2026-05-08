@@ -1,4 +1,5 @@
 import type { FixProposal } from './fix_proposals';
+import type { RemediationMetadata } from '../../../../.flue/lib/remediation-types';
 
 export type Finding = {
 	severity: 'low' | 'medium' | 'high' | 'critical';
@@ -8,6 +9,7 @@ export type Finding = {
 	description: string;
 	suggestion?: string | null;
 	fixProposal: FixProposal;
+	remediation: RemediationMetadata;
 };
 
 const severityOrder: Record<Finding['severity'], number> = {
