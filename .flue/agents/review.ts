@@ -24,11 +24,11 @@ const fixProposalSchema = v.object({
 });
 
 const remediationSchema = v.object({
-	remediationEligibility: v.string(),
-	remediationKind: v.string(),
-	patchScope: v.string(),
-	verificationStrategy: v.string(),
-	groupKey: v.string(),
+	remediationEligibility: v.optional(v.nullable(v.string())),
+	remediationKind: v.optional(v.nullable(v.string())),
+	patchScope: v.optional(v.nullable(v.string())),
+	verificationStrategy: v.optional(v.nullable(v.string())),
+	groupKey: v.optional(v.nullable(v.string())),
 	eligibilityRationale: v.optional(v.nullable(v.string())),
 	blockedReason: v.optional(v.nullable(v.string())),
 });

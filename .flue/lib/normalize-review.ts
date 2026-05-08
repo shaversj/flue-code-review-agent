@@ -3,18 +3,13 @@ import {
 	hasCompleteFixProposal,
 	normalizeFixProposal,
 } from '../../.agents/skills/code-review/scripts/fix_proposals';
-import { normalizeRemediationMetadata } from './remediation-policy';
+import {
+	normalizeRemediationMetadata,
+	type RawRemediationMetadata,
+} from './remediation-policy';
 
 type RawReviewIssue = Omit<Finding, 'remediation'> & {
-	remediation: {
-		remediationEligibility: string;
-		remediationKind: string;
-		patchScope: string;
-		verificationStrategy: string;
-		groupKey: string;
-		eligibilityRationale?: string | null;
-		blockedReason?: string | null;
-	};
+	remediation: RawRemediationMetadata;
 };
 
 export type RawReviewResult = {
@@ -275,6 +270,15 @@ const remediationPatchScopeRank: Record<Finding['remediation']['patchScope'], nu
 	'multi-file': 1,
 };
 
+const remediationKindRank: Record<Finding['remediation']['remediationKind'], number> = {
+	'null-guard': 2,
+	'input-validation': 2,
+	'bounds-check': 2,
+	'api-misuse': 2,
+	'auth-ordering': 2,
+	refactor: 1,
+};
+
 const remediationVerificationRank: Record<Finding['remediation']['verificationStrategy'], number> = {
 	'existing-test-update': 4,
 	'unit-test': 3,
@@ -300,6 +304,7 @@ function shouldReplaceRemediation(current: Finding['remediation'], incoming: Fin
 	const comparisons = [
 		remediationEligibilityRank[incoming.remediationEligibility] -
 			remediationEligibilityRank[current.remediationEligibility],
+		remediationKindRank[incoming.remediationKind] - remediationKindRank[current.remediationKind],
 		remediationPatchScopeRank[incoming.patchScope] - remediationPatchScopeRank[current.patchScope],
 		remediationVerificationRank[incoming.verificationStrategy] -
 			remediationVerificationRank[current.verificationStrategy],
