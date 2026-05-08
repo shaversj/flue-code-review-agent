@@ -13,6 +13,7 @@ import {
 	type ReviewResult as NormalizedReviewResult,
 } from '../lib/normalize-review';
 import { printResults } from '../lib/print-results';
+import { buildAndWriteRemediationPlan } from '../lib/remediation-plan';
 
 export const triggers = { webhook: true };
 
@@ -244,6 +245,7 @@ export default async function (ctx: FlueContext) {
 	};
 
 	await writeJson(path.join(dataDir, 'findings.json'), normalizedResult);
+	const remediationPlan = await buildAndWriteRemediationPlan(dataDir, normalizedResult.issues);
 	await writeJson(path.join(dataDir, 'report.json'), response);
 	await writeFile(path.join(runDir, 'summary.md'), `${response.reportMarkdown}\n`, 'utf8');
 	await writeJson(manifestPath, {
@@ -255,6 +257,7 @@ export default async function (ctx: FlueContext) {
 			collect: 'complete',
 			review: 'complete',
 			report: 'complete',
+			remediation: remediationPlan.groups.length > 0 ? 'planned' : 'skipped',
 		},
 	});
 
