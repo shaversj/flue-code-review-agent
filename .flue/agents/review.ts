@@ -14,6 +14,7 @@ import {
 } from '../lib/normalize-review';
 import { printResults } from '../lib/print-results';
 import { buildAndWriteRemediationPlan } from '../lib/remediation-plan';
+import { prepareRemediationPullRequest } from '../lib/remediation-executor';
 
 export const triggers = { webhook: true };
 
@@ -246,6 +247,10 @@ export default async function (ctx: FlueContext) {
 
 	await writeJson(path.join(dataDir, 'findings.json'), normalizedResult);
 	const remediationPlan = await buildAndWriteRemediationPlan(dataDir, normalizedResult.issues);
+	const remediationExecutions = await Promise.all(
+		remediationPlan.groups.map((group) => prepareRemediationPullRequest(group)),
+	);
+	await writeJson(path.join(dataDir, 'remediation-executions.json'), remediationExecutions);
 	await writeJson(path.join(dataDir, 'report.json'), response);
 	await writeFile(path.join(runDir, 'summary.md'), `${response.reportMarkdown}\n`, 'utf8');
 	await writeJson(manifestPath, {
@@ -257,7 +262,7 @@ export default async function (ctx: FlueContext) {
 			collect: 'complete',
 			review: 'complete',
 			report: 'complete',
-			remediation: remediationPlan.groups.length > 0 ? 'planned' : 'skipped',
+			remediation: remediationExecutions.some((item) => item.status === 'prepared') ? 'prepared' : 'planned',
 		},
 	});
 
