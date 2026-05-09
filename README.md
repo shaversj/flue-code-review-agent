@@ -10,6 +10,10 @@ This project runs a structured code review over a scoped set of source files and
 - a deterministic score and summary
 - saved review artifacts under `.review-runs/`
 
+The pipeline can also produce remediation planning artifacts for high-confidence findings.
+These artifacts group auto-eligible issues into bounded remediation units and prepare
+verification-aware PR payloads for downstream execution.
+
 The current pipeline is optimized for:
 
 - material bug finding over style commentary
@@ -118,6 +122,11 @@ Typical contents include:
 - `data/report.json`
 - `data/collect.json`
 - `data/logs/session.log`
+
+Remediation-enabled runs may also include:
+
+- `data/remediation.json`
+- `data/remediation-executions.json`
 
 ## Development Notes
 
