@@ -30,6 +30,16 @@ function hasCompleteFixProposal(issue) {
 	);
 }
 
+function hasCompleteRemediation(issue) {
+	return Boolean(
+		issue.remediation?.remediationEligibility?.trim() &&
+			issue.remediation?.remediationKind?.trim() &&
+			issue.remediation?.patchScope?.trim() &&
+			issue.remediation?.verificationStrategy?.trim() &&
+			issue.remediation?.groupKey?.trim(),
+	);
+}
+
 async function loadRun(runId) {
 	const filePath = path.join(runsRoot, runId, 'data', 'findings.json');
 	const collectPath = path.join(runsRoot, runId, 'data', 'collect.json');
@@ -52,6 +62,7 @@ async function loadRun(runId) {
 			score: result.score,
 			issues: result.issues,
 			proposalCompleteness: (result.issues ?? []).filter(hasCompleteFixProposal).length,
+			remediationCompleteness: (result.issues ?? []).filter(hasCompleteRemediation).length,
 		};
 	} catch (error) {
 		if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
@@ -77,6 +88,7 @@ async function main() {
 	const scoreValues = runs.map((run) => run.score);
 	const issueCounts = runs.map((run) => run.issues.length);
 	const proposalCompletenessValues = runs.map((run) => run.proposalCompleteness);
+	const remediationCompletenessValues = runs.map((run) => run.remediationCompleteness);
 	const fingerprints = new Map();
 
 	for (const run of runs) {
@@ -122,6 +134,7 @@ async function main() {
 	console.log(`Score range: ${formatRange(scoreValues)}`);
 	console.log(`Issue count range: ${formatRange(issueCounts)}`);
 	console.log(`Complete fix proposals per run: ${formatRange(proposalCompletenessValues)}`);
+	console.log(`Complete remediation metadata per run: ${formatRange(remediationCompletenessValues)}`);
 	console.log('');
 	console.log('Recurring findings:');
 

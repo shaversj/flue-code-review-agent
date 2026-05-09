@@ -70,6 +70,35 @@ function assertFixProposal(issue, runId) {
 	}
 }
 
+function assertRemediation(issue, runId) {
+	if (!issue.remediation) {
+		fail(`Golden check failed for ${runId}: finding at ${issue.file}:${issue.line ?? '-'} is missing remediation metadata.`);
+	}
+
+	const requiredFields = [
+		issue.remediation.remediationEligibility,
+		issue.remediation.remediationKind,
+		issue.remediation.patchScope,
+		issue.remediation.verificationStrategy,
+		issue.remediation.groupKey,
+	];
+
+	if (requiredFields.some((value) => typeof value !== 'string' || value.trim() === '')) {
+		fail(`Golden check failed for ${runId}: finding at ${issue.file}:${issue.line ?? '-'} has incomplete remediation metadata.`);
+	}
+}
+
+function assertExpectedRemediation(issue, expected, label, runId) {
+	const actual = issue.remediation;
+	for (const [field, expectedValue] of Object.entries(expected)) {
+		if (actual[field] !== expectedValue) {
+			fail(
+				`Golden check failed for ${runId}: ${label} should have remediation.${field}=${expectedValue}, got ${actual[field]}.`,
+			);
+		}
+	}
+}
+
 async function main() {
 	const latest = await loadLatestRun();
 	if (!latest) {
@@ -81,6 +110,7 @@ async function main() {
 
 	for (const issue of issues) {
 		assertFixProposal(issue, runId);
+		assertRemediation(issue, runId);
 	}
 
 	if (issues.length !== 4) {
@@ -116,6 +146,18 @@ async function main() {
 	if (!sql.fixProposal.recommendedDirection.toLowerCase().includes('parameter')) {
 		fail(`Golden check failed for ${runId}: SQL injection fix should recommend parameterization.`);
 	}
+	assertExpectedRemediation(
+		sql,
+		{
+			remediationEligibility: 'manual',
+			remediationKind: 'api-misuse',
+			patchScope: 'single-function',
+			verificationStrategy: 'integration-test',
+			groupKey: 'security:database-query',
+		},
+		'SQL injection',
+		runId,
+	);
 
 	if (!offByOne) fail(`Golden check failed for ${runId}: missing off-by-one finding.`);
 	if (offByOne.line !== 15) fail(`Golden check failed for ${runId}: off-by-one should anchor to line 15, got ${offByOne.line}.`);
@@ -128,6 +170,18 @@ async function main() {
 	) {
 		fail(`Golden check failed for ${runId}: off-by-one verification should mention a boundary-focused check.`);
 	}
+	assertExpectedRemediation(
+		offByOne,
+		{
+			remediationEligibility: 'auto',
+			remediationKind: 'bounds-check',
+			patchScope: 'single-line',
+			verificationStrategy: 'unit-test',
+			groupKey: 'correctness:user-loop-bounds',
+		},
+		'off-by-one loop',
+		runId,
+	);
 
 	if (!credentials) fail(`Golden check failed for ${runId}: missing credential exposure finding.`);
 	if (credentials.line !== 22) fail(`Golden check failed for ${runId}: credential exposure should anchor to line 22, got ${credentials.line}.`);
@@ -140,6 +194,18 @@ async function main() {
 	) {
 		fail(`Golden check failed for ${runId}: credential exposure fix should stay anchored to sensitive logging.`);
 	}
+	assertExpectedRemediation(
+		credentials,
+		{
+			remediationEligibility: 'manual',
+			remediationKind: 'refactor',
+			patchScope: 'single-function',
+			verificationStrategy: 'existing-test-update',
+			groupKey: 'security:db-logging',
+		},
+		'credential exposure',
+		runId,
+	);
 
 	if (!fetchHandling) fail(`Golden check failed for ${runId}: missing fetch error handling finding.`);
 	if (fetchHandling.line !== 32) {
@@ -156,6 +222,18 @@ async function main() {
 	) {
 		fail(`Golden check failed for ${runId}: fetch handling fix should mention response validation or status checks.`);
 	}
+	assertExpectedRemediation(
+		fetchHandling,
+		{
+			remediationEligibility: 'auto',
+			remediationKind: 'input-validation',
+			patchScope: 'single-function',
+			verificationStrategy: 'unit-test',
+			groupKey: 'correctness:fetch-response-validation',
+		},
+		'fetch response handling',
+		runId,
+	);
 
 	if (typeof result.score !== 'number' || result.score < 40 || result.score > 80) {
 		fail(`Golden check failed for ${runId}: expected score to stay within 40..80, got ${result.score}.`);
