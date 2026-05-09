@@ -79,6 +79,13 @@ export function buildRemediationGroups(findings: Finding[]): {
 				remediationKind: firstFinding.remediation.remediationKind,
 				verificationStrategy: firstFinding.remediation.verificationStrategy,
 				files,
+				instructions: bucket.map((finding) => ({
+					file: finding.file,
+					line: finding.line,
+					fixSummary: finding.fixProposal.fixSummary,
+					recommendedDirection: finding.fixProposal.recommendedDirection,
+					verificationHint: finding.fixProposal.verificationHint,
+				})),
 				issues: bucket.map((finding) => ({
 					file: finding.file,
 					line: finding.line,

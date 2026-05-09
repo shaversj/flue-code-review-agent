@@ -67,7 +67,25 @@ async function loadLatestRemediation() {
 				continue;
 			}
 
-			return { runId, remediation: JSON.parse(remediationContents), isGoldenRun };
+			let remediationExecutions = null;
+			try {
+				const executionContents = await readFile(
+					path.join(runsRoot, runId, 'data', 'remediation-executions.json'),
+					'utf8',
+				);
+				remediationExecutions = JSON.parse(executionContents);
+			} catch (error) {
+				if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) {
+					throw error;
+				}
+			}
+
+			return {
+				runId,
+				remediation: JSON.parse(remediationContents),
+				remediationExecutions,
+				isGoldenRun,
+			};
 		} catch (error) {
 			if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
 				continue;
@@ -229,6 +247,27 @@ for (const [index, expected] of expectedSkipped.entries()) {
 	}
 	if (entry.reason !== expected.reason) {
 		fail(`Remediation artifact for ${latest.runId} has unexpected skipped reason at index ${index}.`);
+	}
+}
+
+if (latest.remediationExecutions != null) {
+	if (!Array.isArray(latest.remediationExecutions)) {
+		fail(`Remediation executions for ${latest.runId} must be an array when present.`);
+	}
+
+	const preparedExecutions = latest.remediationExecutions.filter((item) => item?.status === 'prepared');
+	for (const execution of preparedExecutions) {
+		if (!hasNonEmptyText(execution?.pullRequest?.branchName) || !execution.pullRequest.branchName.startsWith('codex/remediate/')) {
+			fail(`Remediation executions for ${latest.runId} contain an invalid prepared branch name.`);
+		}
+
+		if (
+			!hasNonEmptyText(execution.pullRequest.title) ||
+			!hasNonEmptyText(execution.pullRequest.body) ||
+			!execution.pullRequest.body.includes('## Verification')
+		) {
+			fail(`Remediation executions for ${latest.runId} are missing prepared PR rationale or verification details.`);
+		}
 	}
 }
 

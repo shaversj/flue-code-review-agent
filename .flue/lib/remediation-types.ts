@@ -30,12 +30,21 @@ export type RemediationMetadata = {
 	blockedReason?: string | null;
 };
 
+export type RemediationInstruction = {
+	file: string;
+	line?: number | null;
+	fixSummary: string;
+	recommendedDirection: string;
+	verificationHint: string;
+};
+
 export type RemediationGroup = {
 	id: string;
 	groupKey: string;
 	remediationKind: RemediationKind;
 	verificationStrategy: VerificationStrategy;
 	files: string[];
+	instructions: RemediationInstruction[];
 	issues: Array<{
 		file: string;
 		line?: number | null;
