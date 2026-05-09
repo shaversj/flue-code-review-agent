@@ -14,11 +14,21 @@ export const verificationStrategyValues = [
 	'existing-test-update',
 	'typecheck-only',
 ] as const;
+export const remediationExecutionStatusValues = ['prepared', 'skipped', 'published', 'failed'] as const;
+export const remediationPublishStepValues = [
+	'branch',
+	'patch',
+	'verification',
+	'push',
+	'pr-create',
+] as const;
 
 export type RemediationEligibility = (typeof remediationEligibilityValues)[number];
 export type RemediationKind = (typeof remediationKindValues)[number];
 export type PatchScope = (typeof patchScopeValues)[number];
 export type VerificationStrategy = (typeof verificationStrategyValues)[number];
+export type RemediationExecutionStatus = (typeof remediationExecutionStatusValues)[number];
+export type RemediationPublishStep = (typeof remediationPublishStepValues)[number];
 
 export type RemediationMetadata = {
 	remediationEligibility: RemediationEligibility;
@@ -51,3 +61,53 @@ export type RemediationGroup = {
 		description: string;
 	}>;
 };
+
+export type VerificationResult = {
+	command: string;
+	exitCode: number;
+	outputSummary: string;
+};
+
+export type PreparedPullRequest = {
+	branchName: string;
+	title: string;
+	body: string;
+	verification: VerificationResult[];
+};
+
+export type RemediationPreparedResult = {
+	status: 'prepared';
+	groupId: string;
+	pullRequest: PreparedPullRequest;
+};
+
+export type RemediationPublishSuccess = {
+	status: 'published';
+	groupId: string;
+	publishStep: 'pr-create';
+	pullRequest: PreparedPullRequest & {
+		url: string;
+	};
+};
+
+export type RemediationPublishFailure = {
+	status: 'failed';
+	groupId: string;
+	publishStep: RemediationPublishStep;
+	reason: string;
+	pullRequest: PreparedPullRequest;
+};
+
+export type RemediationPublishResult = RemediationPublishSuccess | RemediationPublishFailure;
+
+export type RemediationSkippedResult = {
+	status: 'skipped';
+	groupId: string;
+	reason: string;
+};
+
+export type RemediationExecutionResult =
+	| RemediationPreparedResult
+	| RemediationPublishSuccess
+	| RemediationPublishFailure
+	| RemediationSkippedResult;
