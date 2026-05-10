@@ -1,8 +1,11 @@
+import path from 'node:path';
 import type { CommandResult } from './remediation-commands';
 import type {
 	PreparedPullRequest,
 	RemediationExecutionResult,
 	RemediationGroup,
+	RemediationPatchFailure,
+	RemediationPatchResult,
 	VerificationResult,
 } from './remediation-types';
 
@@ -10,6 +13,7 @@ export type CommandRunner = (command: string, args: string[]) => Promise<Command
 
 let commandHelpersPromise: Promise<typeof import('./remediation-commands')> | undefined;
 let prBodyHelpersPromise: Promise<typeof import('./remediation-pr-body')> | undefined;
+let patchHelpersPromise: Promise<typeof import('./remediation-patcher')> | undefined;
 
 function loadCommandHelpers(): Promise<typeof import('./remediation-commands')> {
 	commandHelpersPromise ??= import(new URL('./remediation-commands.ts', import.meta.url).href);
@@ -19,6 +23,11 @@ function loadCommandHelpers(): Promise<typeof import('./remediation-commands')> 
 function loadPrBodyHelpers(): Promise<typeof import('./remediation-pr-body')> {
 	prBodyHelpersPromise ??= import(new URL('./remediation-pr-body.ts', import.meta.url).href);
 	return prBodyHelpersPromise;
+}
+
+function loadPatchHelpers(): Promise<typeof import('./remediation-patcher')> {
+	patchHelpersPromise ??= import(new URL('./remediation-patcher.ts', import.meta.url).href);
+	return patchHelpersPromise;
 }
 
 function toVerificationResult(result: CommandResult): VerificationResult {
@@ -45,6 +54,20 @@ function createVerificationFailureResult(
 
 function uniqueGroupFiles(group: RemediationGroup): string[] {
 	return [...new Set(group.files)];
+}
+
+function toWorktreePathspecs(files: string[], cwd: string): string[] | null {
+	const pathspecs: string[] = [];
+
+	for (const file of files) {
+		const relativePath = path.relative(cwd, file);
+		if (relativePath === '' || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+			return null;
+		}
+		pathspecs.push(relativePath);
+	}
+
+	return [...new Set(pathspecs)];
 }
 
 async function createPreparedPullRequest(
@@ -80,21 +103,79 @@ function verificationFailureReason(verification: VerificationResult[]): string |
 	return failedCommand?.outputSummary ?? null;
 }
 
-function parseStatusLines(stdout: string): string[] {
-	return stdout
-		.split('\n')
-		.map((line) => line.trimEnd())
-		.filter((line) => line !== '');
+function remapFileToCwd(file: string, cwd: string, sourceRoot: string): string | null {
+	if (!path.isAbsolute(file)) {
+		return path.resolve(cwd, file);
+	}
+
+	const relativePath = path.relative(sourceRoot, file);
+	if (relativePath === '' || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+		return null;
+	}
+
+	return path.resolve(cwd, relativePath);
 }
 
-function hasPreExistingLocalEdits(statusLines: string[]): boolean {
-	return statusLines.some((line) => {
-		const indexStatus = line[0] ?? ' ';
-		const worktreeStatus = line[1] ?? ' ';
-		const isPublishableWorktreeChange =
-			(indexStatus === ' ' && worktreeStatus !== ' ') || (indexStatus === '?' && worktreeStatus === '?');
-		return !isPublishableWorktreeChange;
-	});
+function remapGroupToCwd(
+	group: RemediationGroup,
+	cwd: string,
+	sourceRoot: string,
+): RemediationGroup | RemediationPatchFailure {
+	const remappedFiles: string[] = [];
+	for (const file of group.files) {
+		const remappedFile = remapFileToCwd(file, cwd, sourceRoot);
+		if (remappedFile == null) {
+			return {
+				status: 'failed',
+				reason: `Deterministic patching requires paths to be relative or under the source root: ${sourceRoot}`,
+			};
+		}
+		remappedFiles.push(remappedFile);
+	}
+
+	const remappedInstructions = [];
+	for (const instruction of group.instructions) {
+		const remappedFile = remapFileToCwd(instruction.file, cwd, sourceRoot);
+		if (remappedFile == null) {
+			return {
+				status: 'failed',
+				reason: `Deterministic patching requires paths to be relative or under the source root: ${sourceRoot}`,
+			};
+		}
+		remappedInstructions.push({
+			...instruction,
+			file: remappedFile,
+		});
+	}
+
+	const remappedIssues = [];
+	for (const issue of group.issues) {
+		const remappedFile = remapFileToCwd(issue.file, cwd, sourceRoot);
+		if (remappedFile == null) {
+			return {
+				status: 'failed',
+				reason: `Deterministic patching requires paths to be relative or under the source root: ${sourceRoot}`,
+			};
+		}
+		remappedIssues.push({
+			...issue,
+			file: remappedFile,
+		});
+	}
+
+	return {
+		...group,
+		files: remappedFiles,
+		instructions: remappedInstructions,
+		issues: remappedIssues,
+	};
+}
+
+async function applyGroupPatch(
+	group: RemediationGroup,
+): Promise<RemediationPatchResult> {
+	const { applyDeterministicRemediationPatch } = await loadPatchHelpers();
+	return applyDeterministicRemediationPatch(group);
 }
 
 export async function prepareRemediationPullRequest(
@@ -125,6 +206,7 @@ export async function executeRemediationGroup(
 	group: RemediationGroup,
 	cwd: string,
 	run?: CommandRunner,
+	sourceRoot = process.cwd(),
 ): Promise<RemediationExecutionResult> {
 	const [{ runCommand, verificationCommands }, { createPullRequestBody }] = await Promise.all([
 		loadCommandHelpers(),
@@ -133,7 +215,27 @@ export async function executeRemediationGroup(
 	const verification: VerificationResult[] = [];
 	const pullRequest = await createPreparedPullRequest(group, verification);
 	const runGroupCommand = run ?? ((command, args) => runCommand(command, args, cwd));
-	const groupFiles = uniqueGroupFiles(group);
+	const remappedGroup = remapGroupToCwd(group, cwd, sourceRoot);
+	if (!('groupKey' in remappedGroup)) {
+		return {
+			status: 'failed',
+			groupId: group.id,
+			publishStep: 'patch',
+			reason: remappedGroup.reason,
+			pullRequest,
+		};
+	}
+
+	const groupFiles = toWorktreePathspecs(uniqueGroupFiles(remappedGroup), cwd);
+	if (!groupFiles) {
+		return {
+			status: 'failed',
+			groupId: group.id,
+			publishStep: 'patch',
+			reason: `Deterministic patching requires remapped files to stay within the worktree: ${cwd}`,
+			pullRequest,
+		};
+	}
 
 	const branchResult = await runGroupCommand('git', ['checkout', '-B', pullRequest.branchName]);
 	if (branchResult.exitCode !== 0) {
@@ -146,34 +248,13 @@ export async function executeRemediationGroup(
 		};
 	}
 
-	const patchResult = await runGroupCommand('git', ['status', '--short', '--', ...groupFiles]);
-	if (patchResult.exitCode !== 0) {
+	const patchResult = await applyGroupPatch(remappedGroup);
+	if (patchResult.status === 'failed') {
 		return {
 			status: 'failed',
 			groupId: group.id,
 			publishStep: 'patch',
-			reason: patchResult.outputSummary,
-			pullRequest,
-		};
-	}
-
-	const patchStatusLines = parseStatusLines(patchResult.stdout);
-	if (patchStatusLines.length === 0) {
-		return {
-			status: 'failed',
-			groupId: group.id,
-			publishStep: 'patch',
-			reason: `No remediation changes found for group files: ${groupFiles.join(', ')}`,
-			pullRequest,
-		};
-	}
-
-	if (hasPreExistingLocalEdits(patchStatusLines)) {
-		return {
-			status: 'failed',
-			groupId: group.id,
-			publishStep: 'patch',
-			reason: `Pre-existing local edits detected for group files: ${groupFiles.join(', ')}`,
+			reason: patchResult.reason,
 			pullRequest,
 		};
 	}

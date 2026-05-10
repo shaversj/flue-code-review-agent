@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
+import type { CommandResult } from './remediation-commands';
 import type { RemediationGroup } from './remediation-types';
 
 const { executeRemediationGroup, prepareRemediationPullRequest } = await import(
@@ -8,120 +12,298 @@ const { executeRemediationGroup, prepareRemediationPullRequest } = await import(
 
 const baseGroup: RemediationGroup = {
 	id: 'group-1',
-	groupKey: 'null-guard:src/example.ts',
-	remediationKind: 'null-guard',
+	groupKey: 'bounds-check:src/example.ts',
+	remediationKind: 'bounds-check',
 	verificationStrategy: 'typecheck-only',
 	files: ['src/example.ts'],
 	instructions: [
 		{
 			file: 'src/example.ts',
-			line: 10,
-			fixSummary: 'Guard the nullable access before dereferencing.',
-			recommendedDirection: 'Return early when the nullable value is absent.',
-			verificationHint: 'Run typecheck after adding the guard.',
+			line: 2,
+			fixSummary: 'Use an exclusive upper bound for the loop.',
+			recommendedDirection: 'Change the loop condition to stop before users.length.',
+			verificationHint: 'Run typecheck after the operator change.',
 		},
 	],
-	issues: [{ file: 'src/example.ts', line: 10, description: 'Nullable dereference.' }],
+	issues: [{ file: 'src/example.ts', line: 2, description: 'Inclusive loop bound.' }],
 };
 
-test('returns published when verification, push, and PR creation succeed', async () => {
-	const calls: string[] = [];
-	const result = await executeRemediationGroup(baseGroup, process.cwd(), async (command: string, args: string[]) => {
-		calls.push([command, ...args].join(' '));
+async function withTempCwd(
+	files: Record<string, string>,
+	run: (cwd: string) => Promise<void>,
+): Promise<void> {
+	const cwd = await mkdtemp(path.join(os.tmpdir(), 'remediation-executor-'));
 
-		if (command === 'gh') {
-			return {
-				command: 'gh pr create --title test --body test',
-				exitCode: 0,
-				outputSummary: 'https://github.com/example/repo/pull/1',
-				stdout: 'https://github.com/example/repo/pull/1\n',
-				stderr: '',
-			};
-		}
+	for (const [relativePath, contents] of Object.entries(files)) {
+		const filePath = path.join(cwd, relativePath);
+		await mkdir(path.dirname(filePath), { recursive: true });
+		await writeFile(filePath, contents, 'utf8');
+	}
 
-		return {
-			command: [command, ...args].join(' '),
-			exitCode: 0,
-			outputSummary: command === 'git' && args[0] === 'status' ? '' : 'ok',
-			stdout: command === 'git' && args[0] === 'status' ? ' M src/example.ts\n' : 'ok\n',
-			stderr: '',
-		};
-	});
+	await run(cwd);
+}
 
-	assert.equal(result.status, 'published');
-	assert.equal(result.publishStep, 'pr-create');
-	assert.equal(result.pullRequest.url, 'https://github.com/example/repo/pull/1');
-	assert.equal(result.pullRequest.verification.length, 1);
-	assert.deepEqual(calls.slice(0, 6), [
-		'git checkout -B codex/remediate/null-guard/group-1',
-		'git status --short -- src/example.ts',
-		'git add -- src/example.ts',
-		'git commit --only -m fix: remediate null-guard findings in src/example.ts -- src/example.ts',
-		'pnpm run check:types',
-		'git push --set-upstream origin codex/remediate/null-guard/group-1',
-	]);
-	assert.match(calls[6] ?? '', /^gh pr create --title fix: remediate null-guard findings in src\/example\.ts --body /);
-	assert.match(calls[6] ?? '', /## Verification/);
-});
-
-test('returns failed when target group files already have local edits before staging', async () => {
-	const calls: string[] = [];
-	const result = await executeRemediationGroup(baseGroup, process.cwd(), async (command: string, args: string[]) => {
-		calls.push([command, ...args].join(' '));
-		return {
-			command: [command, ...args].join(' '),
-			exitCode: 0,
-			outputSummary: '',
-			stdout: command === 'git' && args[0] === 'status' ? 'MM src/example.ts\n' : '',
-			stderr: '',
-		};
-	});
-
-	assert.equal(result.status, 'failed');
-	assert.equal(result.publishStep, 'patch');
-	assert.match(result.reason, /Pre-existing local edits/i);
-	assert.deepEqual(calls, [
-		'git checkout -B codex/remediate/null-guard/group-1',
-		'git status --short -- src/example.ts',
-	]);
-});
-
-test('returns failed when verification fails and preserves the branch payload', async () => {
-	const result = await executeRemediationGroup(baseGroup, process.cwd(), async (command: string, args: string[]) => ({
+function okResult(command: string, args: string[], stdout = 'ok\n'): CommandResult {
+	return {
 		command: [command, ...args].join(' '),
-		exitCode: command === 'git' && args[0] === 'status' ? 0 : command === 'pnpm' ? 1 : 0,
-		outputSummary: command === 'git' && args[0] === 'status' ? '' : command === 'pnpm' ? 'typecheck failed' : 'ok',
-		stdout: command === 'git' && args[0] === 'status' ? ' M src/example.ts\n' : '',
-		stderr: command === 'pnpm' ? 'typecheck failed' : '',
-	}));
+		exitCode: 0,
+		outputSummary: stdout.trim() || 'ok',
+		stdout,
+		stderr: '',
+	};
+}
 
-	assert.equal(result.status, 'failed');
-	assert.equal(result.publishStep, 'verification');
-	assert.equal(result.reason, 'typecheck failed');
-	assert.match(result.pullRequest.branchName, /^codex\/remediate\//);
-	assert.equal(result.pullRequest.verification.length, 1);
+test('returns published when a deterministic patch applies inside the target cwd', async () => {
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const calls: string[] = [];
+			const result = await executeRemediationGroup(baseGroup, cwd, async (command: string, args: string[]) => {
+				calls.push([command, ...args].join(' '));
+
+				if (command === 'gh') {
+					return {
+						command: [command, ...args].join(' '),
+						exitCode: 0,
+						outputSummary: 'https://github.com/example/repo/pull/1',
+						stdout: 'https://github.com/example/repo/pull/1\n',
+						stderr: '',
+					};
+				}
+
+				return okResult(command, args);
+			});
+
+			const updated = await readFile(path.join(cwd, 'src/example.ts'), 'utf8');
+
+			assert.equal(result.status, 'published');
+			assert.equal(result.publishStep, 'pr-create');
+			assert.equal(result.pullRequest.url, 'https://github.com/example/repo/pull/1');
+			assert.equal(result.pullRequest.verification.length, 1);
+			assert.match(updated, /i < users\.length/);
+			assert.deepEqual(calls.slice(0, 5), [
+				'git checkout -B codex/remediate/bounds-check/group-1',
+				'git add -- src/example.ts',
+				'git commit --only -m fix: remediate bounds-check findings in src/example.ts -- src/example.ts',
+				'pnpm run check:types',
+				'git push --set-upstream origin codex/remediate/bounds-check/group-1',
+			]);
+			assert.match(calls[5] ?? '', /^gh pr create --title fix: remediate bounds-check findings in src\/example\.ts --body /);
+		},
+	);
 });
 
-test('returns failed when the remediation group has no file changes to publish', async () => {
-	const calls: string[] = [];
-	const result = await executeRemediationGroup(baseGroup, process.cwd(), async (command: string, args: string[]) => {
-		calls.push([command, ...args].join(' '));
-		return {
-			command: [command, ...args].join(' '),
-			exitCode: 0,
-			outputSummary: 'summary should not count as a change',
-			stdout: '',
-			stderr: '',
-		};
-	});
+test('returns failed when deterministic patch generation cannot match the anchored code', async () => {
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (const user of users) {',
+				'\t\tconsole.log(user.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const calls: string[] = [];
+			const result = await executeRemediationGroup(baseGroup, cwd, async (command: string, args: string[]) => {
+				calls.push([command, ...args].join(' '));
+				return okResult(command, args);
+			});
 
-	assert.equal(result.status, 'failed');
-	assert.equal(result.publishStep, 'patch');
-	assert.match(result.reason, /No remediation changes/i);
-	assert.deepEqual(calls, [
-		'git checkout -B codex/remediate/null-guard/group-1',
-		'git status --short -- src/example.ts',
-	]);
+			const updated = await readFile(path.join(cwd, 'src/example.ts'), 'utf8');
+
+			assert.equal(result.status, 'failed');
+			assert.equal(result.publishStep, 'patch');
+			assert.match(result.reason, /supported pattern/i);
+			assert.doesNotMatch(updated, /i < users\.length/);
+			assert.deepEqual(calls, ['git checkout -B codex/remediate/bounds-check/group-1']);
+		},
+	);
+});
+
+test('returns failed when verification fails and preserves branch payload after a real patch succeeds', async () => {
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const result = await executeRemediationGroup(baseGroup, cwd, async (command: string, args: string[]) => {
+				if (command === 'pnpm') {
+					return {
+						command: [command, ...args].join(' '),
+						exitCode: 1,
+						outputSummary: 'typecheck failed',
+						stdout: '',
+						stderr: 'typecheck failed',
+					};
+				}
+
+				return okResult(command, args);
+			});
+
+			const updated = await readFile(path.join(cwd, 'src/example.ts'), 'utf8');
+
+			assert.equal(result.status, 'failed');
+			assert.equal(result.publishStep, 'verification');
+			assert.equal(result.reason, 'typecheck failed');
+			assert.match(result.pullRequest.branchName, /^codex\/remediate\//);
+			assert.equal(result.pullRequest.verification.length, 1);
+			assert.match(updated, /i < users\.length/);
+		},
+	);
+});
+
+test('applies the patch using cwd-relative file remapping for group files and anchored instructions', async () => {
+	await withTempCwd(
+		{
+			'packages/app/src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const remappedGroup: RemediationGroup = {
+				...baseGroup,
+				id: 'group-remap',
+				groupKey: 'bounds-check:packages/app/src/example.ts',
+				files: ['packages/app/src/example.ts'],
+				instructions: [
+					{
+						file: 'packages/app/src/example.ts',
+						line: 2,
+						fixSummary: 'Use an exclusive upper bound for the loop.',
+						recommendedDirection: 'Change the loop condition to stop before users.length.',
+						verificationHint: 'Run typecheck after the operator change.',
+					},
+				],
+				issues: [{ file: 'packages/app/src/example.ts', line: 2, description: 'Inclusive loop bound.' }],
+			};
+			const calls: string[] = [];
+			const result = await executeRemediationGroup(remappedGroup, cwd, async (command: string, args: string[]) => {
+				calls.push([command, ...args].join(' '));
+
+				if (command === 'gh') {
+					return {
+						command: [command, ...args].join(' '),
+						exitCode: 0,
+						outputSummary: 'https://github.com/example/repo/pull/2',
+						stdout: 'https://github.com/example/repo/pull/2\n',
+						stderr: '',
+					};
+				}
+
+				return okResult(command, args);
+			});
+
+			const updated = await readFile(path.join(cwd, 'packages/app/src/example.ts'), 'utf8');
+
+			assert.equal(result.status, 'published');
+			assert.match(updated, /i < users\.length/);
+			assert.ok(calls.includes('git add -- packages/app/src/example.ts'));
+		},
+	);
+});
+
+test('rebases absolute source-checkout paths into the target cwd before patching', async () => {
+	const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'remediation-executor-source-'));
+	const sourceFilePath = path.join(sourceRoot, 'src/example.ts');
+	await mkdir(path.dirname(sourceFilePath), { recursive: true });
+	await writeFile(
+		sourceFilePath,
+		[
+			'export function processUsers(users: { name: string }[]): void {',
+			'\tfor (let i = 0; i <= users.length; i += 1) {',
+			'\t\tconsole.log(users[i]!.name.toUpperCase());',
+			'\t}',
+			'}',
+			'',
+		].join('\n'),
+		'utf8',
+	);
+
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const calls: string[] = [];
+			const absolutePathGroup: RemediationGroup = {
+				...baseGroup,
+				id: 'group-absolute',
+				files: [sourceFilePath],
+				instructions: [
+					{
+						file: sourceFilePath,
+						line: 2,
+						fixSummary: 'Use an exclusive upper bound for the loop.',
+						recommendedDirection: 'Change the loop condition to stop before users.length.',
+						verificationHint: 'Run typecheck after the operator change.',
+					},
+				],
+				issues: [{ file: sourceFilePath, line: 2, description: 'Inclusive loop bound.' }],
+			};
+
+			const result = await executeRemediationGroup(
+				absolutePathGroup,
+				cwd,
+				async (command: string, args: string[]) => {
+					calls.push([command, ...args].join(' '));
+
+					if (command === 'gh') {
+						return {
+							command: [command, ...args].join(' '),
+							exitCode: 0,
+							outputSummary: 'https://github.com/example/repo/pull/3',
+							stdout: 'https://github.com/example/repo/pull/3\n',
+							stderr: '',
+						};
+					}
+
+					return okResult(command, args);
+				},
+				sourceRoot,
+			);
+
+			const sourceUpdated = await readFile(sourceFilePath, 'utf8');
+			const targetUpdated = await readFile(path.join(cwd, 'src/example.ts'), 'utf8');
+			const commitCall = calls.find((call) => call.startsWith('git commit --only -m '));
+
+			assert.equal(result.status, 'published');
+			assert.doesNotMatch(sourceUpdated, /i < users\.length/);
+			assert.match(targetUpdated, /i < users\.length/);
+			assert.ok(calls.includes('git add -- src/example.ts'));
+			assert.ok(commitCall?.endsWith(' -- src/example.ts'));
+		},
+	);
 });
 
 test('prepareRemediationPullRequest returns failed when verification fails', async () => {
@@ -154,7 +336,7 @@ test('prepareRemediationPullRequest reruns verification across calls to avoid st
 		};
 	});
 	const second = await prepareRemediationPullRequest(
-		{ ...baseGroup, id: 'group-2', groupKey: 'null-guard:src/other.ts', files: ['src/other.ts'] },
+		{ ...baseGroup, id: 'group-2', groupKey: 'bounds-check:src/other.ts', files: ['src/other.ts'] },
 		async (command: string, args: string[]) => {
 			verificationRuns++;
 			return {
