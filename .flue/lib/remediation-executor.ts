@@ -1,5 +1,15 @@
 import path from 'node:path';
-import type { CommandResult } from './remediation-commands';
+import {
+	runCommand,
+	type CommandResult,
+	verificationCommands,
+} from './remediation-commands.ts';
+import {
+	createBranchName,
+	createPullRequestBody,
+	createPullRequestTitle,
+} from './remediation-pr-body.ts';
+import { applyDeterministicRemediationPatch } from './remediation-patcher.ts';
 import type {
 	PreparedPullRequest,
 	RemediationExecutionResult,
@@ -10,25 +20,6 @@ import type {
 } from './remediation-types';
 
 export type CommandRunner = (command: string, args: string[]) => Promise<CommandResult>;
-
-let commandHelpersPromise: Promise<typeof import('./remediation-commands')> | undefined;
-let prBodyHelpersPromise: Promise<typeof import('./remediation-pr-body')> | undefined;
-let patchHelpersPromise: Promise<typeof import('./remediation-patcher')> | undefined;
-
-function loadCommandHelpers(): Promise<typeof import('./remediation-commands')> {
-	commandHelpersPromise ??= import(new URL('./remediation-commands.ts', import.meta.url).href);
-	return commandHelpersPromise;
-}
-
-function loadPrBodyHelpers(): Promise<typeof import('./remediation-pr-body')> {
-	prBodyHelpersPromise ??= import(new URL('./remediation-pr-body.ts', import.meta.url).href);
-	return prBodyHelpersPromise;
-}
-
-function loadPatchHelpers(): Promise<typeof import('./remediation-patcher')> {
-	patchHelpersPromise ??= import(new URL('./remediation-patcher.ts', import.meta.url).href);
-	return patchHelpersPromise;
-}
 
 function toVerificationResult(result: CommandResult): VerificationResult {
 	return {
@@ -74,7 +65,6 @@ async function createPreparedPullRequest(
 	group: RemediationGroup,
 	verification: VerificationResult[] = [],
 ): Promise<PreparedPullRequest> {
-	const { createBranchName, createPullRequestTitle } = await loadPrBodyHelpers();
 	return {
 		branchName: createBranchName(group),
 		title: createPullRequestTitle(group),
@@ -87,7 +77,6 @@ async function runVerificationCommands(
 	group: RemediationGroup,
 	run: CommandRunner,
 ): Promise<VerificationResult[]> {
-	const { verificationCommands } = await loadCommandHelpers();
 	const verification: VerificationResult[] = [];
 
 	for (const command of verificationCommands(group.verificationStrategy)) {
@@ -174,18 +163,15 @@ function remapGroupToCwd(
 async function applyGroupPatch(
 	group: RemediationGroup,
 ): Promise<RemediationPatchResult> {
-	const { applyDeterministicRemediationPatch } = await loadPatchHelpers();
 	return applyDeterministicRemediationPatch(group);
 }
 
 export async function prepareRemediationPullRequest(
 	group: RemediationGroup,
 	run: CommandRunner = async (command, args) => {
-		const { runCommand } = await loadCommandHelpers();
 		return runCommand(command, args, process.cwd());
 	},
 ): Promise<RemediationExecutionResult> {
-	const { createPullRequestBody } = await loadPrBodyHelpers();
 	const verification = await runVerificationCommands(group, run);
 	const pullRequest = {
 		...(await createPreparedPullRequest(group, verification)),
@@ -208,10 +194,6 @@ export async function executeRemediationGroup(
 	run?: CommandRunner,
 	sourceRoot = process.cwd(),
 ): Promise<RemediationExecutionResult> {
-	const [{ runCommand, verificationCommands }, { createPullRequestBody }] = await Promise.all([
-		loadCommandHelpers(),
-		loadPrBodyHelpers(),
-	]);
 	const verification: VerificationResult[] = [];
 	const pullRequest = await createPreparedPullRequest(group, verification);
 	const runGroupCommand = run ?? ((command, args) => runCommand(command, args, cwd));
