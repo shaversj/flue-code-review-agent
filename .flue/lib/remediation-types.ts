@@ -30,6 +30,18 @@ export type VerificationStrategy = (typeof verificationStrategyValues)[number];
 export type RemediationExecutionStatus = (typeof remediationExecutionStatusValues)[number];
 export type RemediationPublishStep = (typeof remediationPublishStepValues)[number];
 
+export type RemediationPatchSuccess = {
+	status: 'applied';
+	files: string[];
+};
+
+export type RemediationPatchFailure = {
+	status: 'failed';
+	reason: string;
+};
+
+export type RemediationPatchResult = RemediationPatchSuccess | RemediationPatchFailure;
+
 export type RemediationMetadata = {
 	remediationEligibility: RemediationEligibility;
 	remediationKind: RemediationKind;
