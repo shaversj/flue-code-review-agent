@@ -128,6 +128,11 @@ Remediation-enabled runs may also include:
 - `data/remediation.json`
 - `data/remediation-executions.json`
 
+`remediation-executions.json` records per-group remediation results in a
+`results` array, including publish status, branch name, verification results,
+failure reason, and PR URL when publication succeeds. Older saved runs may
+still use the legacy top-level array shape.
+
 ## Development Notes
 
 - The review skill is written as a rubric-driven playbook, not a generic free-form prompt.

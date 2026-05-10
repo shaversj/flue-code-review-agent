@@ -54,6 +54,7 @@ async function hasGoldenMarker(runId) {
 
 async function loadLatestRemediation() {
 	const runIds = (await readdir(runsRoot)).sort().reverse();
+	let foundGoldenMarker = false;
 
 	for (const runId of runIds) {
 		try {
@@ -62,8 +63,13 @@ async function loadLatestRemediation() {
 				readFile(path.join(runsRoot, runId, 'data', 'remediation.json'), 'utf8'),
 				hasGoldenMarker(runId),
 			]);
+			if (!isGoldenRun) {
+				continue;
+			}
+
+			foundGoldenMarker = true;
 			const collect = JSON.parse(collectContents);
-			if (!isGoldenRun || !matchesExpectedFixtureFiles(collect)) {
+			if (!matchesExpectedFixtureFiles(collect)) {
 				continue;
 			}
 
@@ -84,7 +90,6 @@ async function loadLatestRemediation() {
 				runId,
 				remediation: JSON.parse(remediationContents),
 				remediationExecutions,
-				isGoldenRun,
 			};
 		} catch (error) {
 			if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
@@ -94,8 +99,14 @@ async function loadLatestRemediation() {
 		}
 	}
 
+	if (foundGoldenMarker) {
+		fail(
+			`No blessed remediation.json artifact found for a golden-marked run whose collect.json files match ${expectedFixtureFiles.join(', ')}.`,
+		);
+	}
+
 	fail(
-		`No blessed remediation.json artifact found. Expected a readable remediation.json from a golden-marked run whose collect.json files match ${expectedFixtureFiles.join(', ')}.`,
+		`No blessed remediation.json artifact found under .review-runs/*/${goldenMarkerRelativePath} whose collect.json files match ${expectedFixtureFiles.join(', ')}.`,
 	);
 }
 
@@ -226,6 +237,38 @@ for (const [index, entry] of skipped.entries()) {
 	}
 }
 
+if (latest.remediationExecutions != null) {
+	const executionResults = Array.isArray(latest.remediationExecutions)
+		? latest.remediationExecutions
+		: isObject(latest.remediationExecutions) && Array.isArray(latest.remediationExecutions.results)
+			? latest.remediationExecutions.results
+			: null;
+
+	if (executionResults == null) {
+		fail(
+			`Remediation executions for ${latest.runId} must be an array or an object with a results array when present.`,
+		);
+	}
+
+	const publishedOrFailed = executionResults.filter((item) => item?.status === 'published' || item?.status === 'failed');
+
+	if (publishedOrFailed.length === 0) {
+		fail('Expected remediation executions to include at least one attempted group.');
+	}
+
+	for (const item of publishedOrFailed) {
+		if (!item.pullRequest?.branchName) {
+			fail(`Missing branch name for remediation group ${item.groupId}.`);
+		}
+		if (item.status === 'published' && !item.pullRequest.url) {
+			fail(`Missing PR URL for published remediation group ${item.groupId}.`);
+		}
+		if (item.status === 'failed' && !item.reason) {
+			fail(`Missing failure reason for remediation group ${item.groupId}.`);
+		}
+	}
+}
+
 const expectedSkipped = [
 	{
 		line: 26,
@@ -240,7 +283,9 @@ const expectedSkipped = [
 for (const [index, expected] of expectedSkipped.entries()) {
 	const entry = skipped[index];
 	if (entry.file !== 'example/src/code-with-issues.ts') {
-		fail(`Remediation artifact for ${latest.runId} has unexpected skipped file at index ${index}: expected example/src/code-with-issues.ts, got ${entry.file}.`);
+		fail(
+			`Remediation artifact for ${latest.runId} has unexpected skipped file at index ${index}: expected example/src/code-with-issues.ts, got ${entry.file}.`,
+		);
 	}
 	if (entry.line !== expected.line) {
 		fail(`Remediation artifact for ${latest.runId} has unexpected skipped line at index ${index}: expected ${expected.line}, got ${entry.line}.`);
@@ -250,27 +295,6 @@ for (const [index, expected] of expectedSkipped.entries()) {
 	}
 }
 
-if (latest.remediationExecutions != null) {
-	if (!Array.isArray(latest.remediationExecutions)) {
-		fail(`Remediation executions for ${latest.runId} must be an array when present.`);
-	}
-
-	const preparedExecutions = latest.remediationExecutions.filter((item) => item?.status === 'prepared');
-	for (const execution of preparedExecutions) {
-		if (!hasNonEmptyText(execution?.pullRequest?.branchName) || !execution.pullRequest.branchName.startsWith('codex/remediate/')) {
-			fail(`Remediation executions for ${latest.runId} contain an invalid prepared branch name.`);
-		}
-
-		if (
-			!hasNonEmptyText(execution.pullRequest.title) ||
-			!hasNonEmptyText(execution.pullRequest.body) ||
-			!execution.pullRequest.body.includes('## Verification')
-		) {
-			fail(`Remediation executions for ${latest.runId} are missing prepared PR rationale or verification details.`);
-		}
-	}
-}
-
-console.log(`Remediation artifact check passed for ${latest.runId}${latest.isGoldenRun ? ' (blessed)' : ''}.`);
+console.log(`Remediation artifact check passed for ${latest.runId}.`);
 console.log(`Groups: ${groups.length}`);
 console.log(`Skipped: ${skipped.length}`);

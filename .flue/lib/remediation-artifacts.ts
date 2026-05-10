@@ -13,7 +13,9 @@ export async function writeRemediationArtifact(dataDir: string, artifact: Remedi
 	return outputPath;
 }
 
-export type RemediationExecutionArtifact = RemediationExecutionResult[];
+export type RemediationExecutionArtifact = {
+	results: RemediationExecutionResult[];
+};
 
 export async function writeRemediationExecutionArtifact(
 	dataDir: string,

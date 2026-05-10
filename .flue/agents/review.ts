@@ -1,7 +1,10 @@
 import type { FlueContext, FlueEvent, FlueEventCallback } from '@flue/sdk';
+import { execFile } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import * as v from 'valibot';
 import {
 	collectFilesWithSummary,
@@ -13,10 +16,16 @@ import {
 	type ReviewResult as NormalizedReviewResult,
 } from '../lib/normalize-review';
 import { printResults } from '../lib/print-results';
+import { createBranchName, createPullRequestBody, createPullRequestTitle } from '../lib/remediation-pr-body';
+import { writeRemediationExecutionArtifact } from '../lib/remediation-artifacts';
 import { buildAndWriteRemediationPlan } from '../lib/remediation-plan';
-import { prepareRemediationPullRequest } from '../lib/remediation-executor';
+import { executeRemediationGroup } from '../lib/remediation-executor';
+import type { CommandResult } from '../lib/remediation-commands';
+import type { RemediationExecutionResult, RemediationGroup } from '../lib/remediation-types';
 
 export const triggers = { webhook: true };
+
+const execFileAsync = promisify(execFile);
 
 const fixProposalSchema = v.object({
 	fixSummary: v.string(),
@@ -162,6 +171,92 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
 	await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+async function runCommand(command: string, args: string[], cwd: string): Promise<CommandResult> {
+	try {
+		const { stdout, stderr } = await execFileAsync(command, args, { cwd });
+		return {
+			command: [command, ...args].join(' '),
+			exitCode: 0,
+			outputSummary: stdout.trim() || stderr.trim() || 'Command passed.',
+			stdout,
+			stderr,
+		};
+	} catch (error) {
+		const failure = error as {
+			code?: number;
+			stdout?: string;
+			stderr?: string;
+			message?: string;
+		};
+		const exitCode =
+			typeof failure.code === 'number'
+				? failure.code
+				: typeof failure.code === 'string' && /^\d+$/.test(failure.code)
+					? Number(failure.code)
+					: 1;
+		return {
+			command: [command, ...args].join(' '),
+			exitCode,
+			outputSummary: failure.stderr?.trim() || failure.stdout?.trim() || failure.message || 'Command failed.',
+			stdout: failure.stdout ?? '',
+			stderr: failure.stderr ?? '',
+		};
+	}
+}
+
+async function resolveBaseRef(cwd: string): Promise<string> {
+	const result = await runCommand('git', ['rev-parse', 'HEAD'], cwd);
+	return result.exitCode === 0 ? result.stdout.trim() : 'HEAD';
+}
+
+async function withRemediationWorktree<T>(
+	repoCwd: string,
+	baseRef: string,
+	run: (worktreeCwd: string) => Promise<T>,
+): Promise<T> {
+	const worktreeParent = await mkdtemp(path.join(os.tmpdir(), 'flue-remediation-'));
+	const worktreeCwd = path.join(worktreeParent, 'repo');
+	const addResult = await runCommand('git', ['worktree', 'add', '--detach', worktreeCwd, baseRef], repoCwd);
+	if (addResult.exitCode !== 0) {
+		throw new Error(addResult.outputSummary);
+	}
+
+	try {
+		return await run(worktreeCwd);
+	} finally {
+		await runCommand('git', ['worktree', 'remove', '--force', worktreeCwd], repoCwd);
+		await rm(worktreeParent, { recursive: true, force: true });
+	}
+}
+
+function summarizeRemediationExecutionPhase(results: RemediationExecutionResult[]): 'complete' | 'partial' | 'failed' {
+	if (results.length === 0) {
+		return 'complete';
+	}
+
+	const hasFailed = results.some((result) => result.status === 'failed');
+	if (!hasFailed) {
+		return 'complete';
+	}
+
+	return results.every((result) => result.status === 'failed') ? 'failed' : 'partial';
+}
+
+function createWorktreeFailureExecution(group: RemediationGroup, error: unknown): RemediationExecutionResult {
+	return {
+		status: 'failed',
+		groupId: group.id,
+		publishStep: 'branch',
+		reason: error instanceof Error ? error.message : String(error),
+		pullRequest: {
+			branchName: createBranchName(group),
+			title: createPullRequestTitle(group),
+			body: createPullRequestBody(group, []),
+			verification: [],
+		},
+	};
+}
+
 async function loadSourceFiles(files: string[]): Promise<Map<string, string[]>> {
 	const sourceFiles = new Map<string, string[]>();
 
@@ -198,6 +293,8 @@ async function initializeRunArtifacts(
 		phases: {
 			collect: 'complete',
 			review: 'pending',
+			remediationPlan: 'pending',
+			remediationExecution: 'pending',
 			report: 'pending',
 		},
 	});
@@ -247,10 +344,28 @@ export default async function (ctx: FlueContext) {
 
 	await writeJson(path.join(dataDir, 'findings.json'), normalizedResult);
 	const remediationPlan = await buildAndWriteRemediationPlan(dataDir, normalizedResult.issues);
-	const remediationExecutions = await Promise.all(
-		remediationPlan.groups.map((group) => prepareRemediationPullRequest(group)),
-	);
-	await writeJson(path.join(dataDir, 'remediation-executions.json'), remediationExecutions);
+	await writeJson(manifestPath, {
+		runId,
+		startedAt: collectSummary.collectedAt,
+		repo: path.basename(process.cwd()),
+		phases: {
+			collect: 'complete',
+			review: 'complete',
+			remediationPlan: 'complete',
+			remediationExecution: 'pending',
+			report: 'pending',
+		},
+	});
+	const remediationExecutions: RemediationExecutionResult[] = [];
+	await writeRemediationExecutionArtifact(dataDir, { results: remediationExecutions });
+	const baseRef = await resolveBaseRef(process.cwd());
+	for (const group of remediationPlan.groups) {
+		const execution = await withRemediationWorktree(process.cwd(), baseRef, (worktreeCwd) =>
+			executeRemediationGroup(group, worktreeCwd),
+		).catch((error) => createWorktreeFailureExecution(group, error));
+		remediationExecutions.push(execution);
+		await writeRemediationExecutionArtifact(dataDir, { results: remediationExecutions });
+	}
 	await writeJson(path.join(dataDir, 'report.json'), response);
 	await writeFile(path.join(runDir, 'summary.md'), `${response.reportMarkdown}\n`, 'utf8');
 	await writeJson(manifestPath, {
@@ -261,8 +376,9 @@ export default async function (ctx: FlueContext) {
 		phases: {
 			collect: 'complete',
 			review: 'complete',
+			remediationPlan: 'complete',
+			remediationExecution: summarizeRemediationExecutionPhase(remediationExecutions),
 			report: 'complete',
-			remediation: remediationExecutions.some((item) => item.status === 'prepared') ? 'prepared' : 'planned',
 		},
 	});
 
