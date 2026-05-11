@@ -30,5 +30,8 @@ export function getUserByName(cursor: DbCursor, username: string): unknown {
 
 export async function fetchData(url: string): Promise<unknown> {
 	const response = await fetch(url);
+	if (!('ok' in response) || !response.ok) {
+		throw new Error('Request failed');
+	}
 	return response.json();
 }
