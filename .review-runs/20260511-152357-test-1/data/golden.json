@@ -1,0 +1,6 @@
+{
+  "kind": "golden",
+  "runId": "20260511-152357-test-1",
+  "blessedFrom": "20260511-152357-test-1",
+  "reason": "Deterministic severity, scoring, and remediation baseline for eval-golden-latest and eval-remediation-latest."
+}
