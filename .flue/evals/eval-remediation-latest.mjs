@@ -174,14 +174,14 @@ for (const [index, group] of groups.entries()) {
 const expectedGroups = [
 	{
 		line: 15,
-		groupKey: 'correctness:user-loop-bounds',
+		groupKey: 'user-loop-bounds:example/src/code-with-issues.ts',
 		remediationKind: 'bounds-check',
 		verificationStrategy: 'unit-test',
 		file: 'example/src/code-with-issues.ts',
 	},
 	{
 		line: 32,
-		groupKey: 'correctness:fetch-response-validation',
+		groupKey: 'fetch-response-validation:example/src/code-with-issues.ts',
 		remediationKind: 'input-validation',
 		verificationStrategy: 'unit-test',
 		file: 'example/src/code-with-issues.ts',
@@ -274,11 +274,11 @@ if (latest.remediationExecutions != null) {
 const expectedSkipped = [
 	{
 		line: 26,
-		reason: 'The vulnerability is clear, but the safe repair pattern depends on the database driver API in use.',
+		reason: 'This remediation requires choosing a parameterized query API, which is outside the deterministic patcher scope.',
 	},
 	{
 		line: 22,
-		reason: "The finding is real, but the preferred logging replacement depends on the repository's logging conventions.",
+		reason: 'This remediation requires choosing a redaction strategy, which is outside the deterministic patcher scope.',
 	},
 ];
 

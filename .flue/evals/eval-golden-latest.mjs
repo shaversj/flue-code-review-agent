@@ -132,6 +132,13 @@ async function main() {
 		);
 	}
 
+	if (result.summary !== 'Found 4 material issues: 1 critical, 2 high, 1 medium.') {
+		fail(
+			`Golden check failed for ${runId}: expected deterministic summary ` +
+				`"Found 4 material issues: 1 critical, 2 high, 1 medium.", got "${result.summary}".`,
+		);
+	}
+
 	const sql = findIssue(issues, (issue) => hasText(issue, 'sql injection'));
 	const offByOne = findIssue(issues, (issue) => hasText(issue, 'off-by-one'));
 	const credentials = findIssue(issues, (issue) => hasText(issue, 'credential') || hasText(issue, 'password'));
@@ -152,8 +159,8 @@ async function main() {
 			remediationEligibility: 'manual',
 			remediationKind: 'api-misuse',
 			patchScope: 'single-function',
-			verificationStrategy: 'integration-test',
-			groupKey: 'security:database-query',
+			verificationStrategy: 'unit-test',
+			groupKey: 'sql-injection:example/src/code-with-issues.ts',
 		},
 		'SQL injection',
 		runId,
@@ -161,12 +168,13 @@ async function main() {
 
 	if (!offByOne) fail(`Golden check failed for ${runId}: missing off-by-one finding.`);
 	if (offByOne.line !== 15) fail(`Golden check failed for ${runId}: off-by-one should anchor to line 15, got ${offByOne.line}.`);
-	if (!['high', 'critical'].includes(offByOne.severity)) {
-		fail(`Golden check failed for ${runId}: off-by-one should be high or critical, got ${offByOne.severity}.`);
+	if (offByOne.severity !== 'high') {
+		fail(`Golden check failed for ${runId}: off-by-one should be high, got ${offByOne.severity}.`);
 	}
 	if (
 		!/\bboundar(y|ies)\b/.test(offByOne.fixProposal.verificationHint.toLowerCase()) &&
-		!offByOne.fixProposal.verificationHint.toLowerCase().includes('edge case')
+		!offByOne.fixProposal.verificationHint.toLowerCase().includes('edge case') &&
+		!offByOne.fixProposal.verificationHint.toLowerCase().includes('single-element array')
 	) {
 		fail(`Golden check failed for ${runId}: off-by-one verification should mention a boundary-focused check.`);
 	}
@@ -177,7 +185,7 @@ async function main() {
 			remediationKind: 'bounds-check',
 			patchScope: 'single-line',
 			verificationStrategy: 'unit-test',
-			groupKey: 'correctness:user-loop-bounds',
+			groupKey: 'user-loop-bounds:example/src/code-with-issues.ts',
 		},
 		'off-by-one loop',
 		runId,
@@ -185,8 +193,8 @@ async function main() {
 
 	if (!credentials) fail(`Golden check failed for ${runId}: missing credential exposure finding.`);
 	if (credentials.line !== 22) fail(`Golden check failed for ${runId}: credential exposure should anchor to line 22, got ${credentials.line}.`);
-	if (!['high', 'critical'].includes(credentials.severity)) {
-		fail(`Golden check failed for ${runId}: credential exposure should be high or critical, got ${credentials.severity}.`);
+	if (credentials.severity !== 'high') {
+		fail(`Golden check failed for ${runId}: credential exposure should be high, got ${credentials.severity}.`);
 	}
 	if (
 		!credentials.fixProposal.fixSummary.toLowerCase().includes('log') &&
@@ -199,9 +207,9 @@ async function main() {
 		{
 			remediationEligibility: 'manual',
 			remediationKind: 'refactor',
-			patchScope: 'single-function',
-			verificationStrategy: 'existing-test-update',
-			groupKey: 'security:db-logging',
+			patchScope: 'single-line',
+			verificationStrategy: 'unit-test',
+			groupKey: 'credential-logging:example/src/code-with-issues.ts',
 		},
 		'credential exposure',
 		runId,
@@ -229,14 +237,14 @@ async function main() {
 			remediationKind: 'input-validation',
 			patchScope: 'single-function',
 			verificationStrategy: 'unit-test',
-			groupKey: 'correctness:fetch-response-validation',
+			groupKey: 'fetch-response-validation:example/src/code-with-issues.ts',
 		},
 		'fetch response handling',
 		runId,
 	);
 
-	if (typeof result.score !== 'number' || result.score < 40 || result.score > 80) {
-		fail(`Golden check failed for ${runId}: expected score to stay within 40..80, got ${result.score}.`);
+	if (result.score !== 37) {
+		fail(`Golden check failed for ${runId}: expected deterministic score 37, got ${result.score}.`);
 	}
 
 	console.log(`Golden review check passed for ${runId}.`);
