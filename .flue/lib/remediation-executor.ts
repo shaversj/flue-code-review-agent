@@ -73,9 +73,11 @@ function createRerunBranchName(branchName: string): string {
 async function createPreparedPullRequest(
 	group: RemediationGroup,
 	verification: VerificationResult[] = [],
+	baseBranch?: string,
 ): Promise<PreparedPullRequest> {
 	return {
 		branchName: createBranchName(group),
+		baseBranch,
 		title: createPullRequestTitle(group),
 		body: '',
 		verification,
@@ -180,10 +182,11 @@ export async function prepareRemediationPullRequest(
 	run: CommandRunner = async (command, args) => {
 		return runCommand(command, args, process.cwd());
 	},
+	baseBranch?: string,
 ): Promise<RemediationExecutionResult> {
 	const verification = await runVerificationCommands(group, run);
 	const pullRequest = {
-		...(await createPreparedPullRequest(group, verification)),
+		...(await createPreparedPullRequest(group, verification, baseBranch)),
 		body: createPullRequestBody(group, verification),
 	};
 	const failureReason = verificationFailureReason(verification);
@@ -202,9 +205,10 @@ export async function executeRemediationGroup(
 	cwd: string,
 	run?: CommandRunner,
 	sourceRoot = process.cwd(),
+	baseBranch?: string,
 ): Promise<RemediationExecutionResult> {
 	const verification: VerificationResult[] = [];
-	const pullRequest = await createPreparedPullRequest(group, verification);
+	const pullRequest = await createPreparedPullRequest(group, verification, baseBranch);
 	const runGroupCommand = run ?? ((command, args) => runCommand(command, args, cwd));
 	const remappedGroup = remapGroupToCwd(group, cwd, sourceRoot);
 	if (!('groupKey' in remappedGroup)) {
@@ -301,7 +305,11 @@ export async function executeRemediationGroup(
 			pullRequest.branchName = rerunBranchName;
 			const rerunPushResult = await runGroupCommand('git', ['push', '--set-upstream', 'origin', rerunBranchName]);
 			if (rerunPushResult.exitCode === 0) {
-				const prResult = await runGroupCommand('gh', ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body]);
+				const prArgs = ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body];
+				if (pullRequest.baseBranch) {
+					prArgs.push('--base', pullRequest.baseBranch);
+				}
+				const prResult = await runGroupCommand('gh', prArgs);
 				if (prResult.exitCode !== 0) {
 					return {
 						status: 'failed',
@@ -341,7 +349,11 @@ export async function executeRemediationGroup(
 		};
 	}
 
-	const prResult = await runGroupCommand('gh', ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body]);
+	const prArgs = ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body];
+	if (pullRequest.baseBranch) {
+		prArgs.push('--base', pullRequest.baseBranch);
+	}
+	const prResult = await runGroupCommand('gh', prArgs);
 	if (prResult.exitCode !== 0) {
 		return {
 			status: 'failed',

@@ -102,6 +102,53 @@ test('returns published when a deterministic patch applies inside the target cwd
 	);
 });
 
+test('passes the current branch as gh pr create base when provided', async () => {
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const calls: string[] = [];
+			const result = await executeRemediationGroup(
+				baseGroup,
+				cwd,
+				async (command: string, args: string[]) => {
+					calls.push([command, ...args].join(' '));
+
+					if (command === 'gh') {
+						return {
+							command: [command, ...args].join(' '),
+							exitCode: 0,
+							outputSummary: 'https://github.com/example/repo/pull/99',
+							stdout: 'https://github.com/example/repo/pull/99\n',
+							stderr: '',
+						};
+					}
+
+					return okResult(command, args);
+				},
+				process.cwd(),
+				'skill-version',
+			);
+
+			assert.equal(result.status, 'published');
+			assert.ok(
+				calls.some((call) =>
+					call.includes('gh pr create') && call.includes('--base skill-version'),
+				),
+			);
+			assert.equal(result.pullRequest.baseBranch, 'skill-version');
+		},
+	);
+});
+
 test('returns failed when deterministic patch generation cannot match the anchored code', async () => {
 	await withTempCwd(
 		{

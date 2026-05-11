@@ -205,7 +205,22 @@ async function runCommand(command: string, args: string[], cwd: string): Promise
 	}
 }
 
+async function resolveCurrentBranch(cwd: string): Promise<string | null> {
+	const result = await runCommand('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+	if (result.exitCode !== 0) {
+		return null;
+	}
+
+	const branchName = result.stdout.trim();
+	return branchName && branchName !== 'HEAD' ? branchName : null;
+}
+
 async function resolveBaseRef(cwd: string): Promise<string> {
+	const currentBranch = await resolveCurrentBranch(cwd);
+	if (currentBranch) {
+		return currentBranch;
+	}
+
 	const result = await runCommand('git', ['rev-parse', 'HEAD'], cwd);
 	return result.exitCode === 0 ? result.stdout.trim() : 'HEAD';
 }
@@ -360,10 +375,11 @@ export default async function (ctx: FlueContext) {
 	});
 	const remediationExecutions: RemediationExecutionResult[] = [];
 	await writeRemediationExecutionArtifact(dataDir, { results: remediationExecutions });
+	const baseBranch = await resolveCurrentBranch(process.cwd());
 	const baseRef = await resolveBaseRef(process.cwd());
 	for (const group of remediationPlan.groups) {
 		const execution = await withRemediationWorktree(process.cwd(), baseRef, (worktreeCwd) =>
-			executeRemediationGroup(group, worktreeCwd),
+			executeRemediationGroup(group, worktreeCwd, undefined, process.cwd(), baseBranch ?? undefined),
 		).catch((error) => createWorktreeFailureExecution(group, error));
 		remediationExecutions.push(execution);
 		await writeRemediationExecutionArtifact(dataDir, { results: remediationExecutions });

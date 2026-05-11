@@ -82,6 +82,7 @@ export type VerificationResult = {
 
 export type PreparedPullRequest = {
 	branchName: string;
+	baseBranch?: string;
 	title: string;
 	body: string;
 	verification: VerificationResult[];
