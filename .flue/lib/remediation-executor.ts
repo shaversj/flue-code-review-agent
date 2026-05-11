@@ -70,6 +70,48 @@ function createRerunBranchName(branchName: string): string {
 	return `${branchName}-rerun-${Date.now().toString(36)}`;
 }
 
+function isTransientPrCreateFailure(result: CommandResult): boolean {
+	const text = `${result.outputSummary}\n${result.stderr}\n${result.stdout}`.toLowerCase();
+	return (
+		text.includes('http 504') ||
+		text.includes('timed out') ||
+		text.includes("couldn't respond to your request in time") ||
+		text.includes('api.github.com/graphql')
+	);
+}
+
+async function createPullRequestWithRetry(
+	runGroupCommand: CommandRunner,
+	pullRequest: PreparedPullRequest,
+	maxAttempts = 3,
+): Promise<CommandResult> {
+	const prArgs = ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body];
+	if (pullRequest.baseBranch) {
+		prArgs.push('--base', pullRequest.baseBranch);
+	}
+
+	let lastResult: CommandResult | null = null;
+	for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+		const result = await runGroupCommand('gh', prArgs);
+		if (result.exitCode === 0) {
+			return result;
+		}
+
+		lastResult = result;
+		if (!isTransientPrCreateFailure(result) || attempt === maxAttempts) {
+			return result;
+		}
+	}
+
+	return lastResult ?? {
+		command: ['gh', ...prArgs].join(' '),
+		exitCode: 1,
+		outputSummary: 'PR creation failed.',
+		stdout: '',
+		stderr: '',
+	};
+}
+
 async function createPreparedPullRequest(
 	group: RemediationGroup,
 	verification: VerificationResult[] = [],
@@ -305,11 +347,7 @@ export async function executeRemediationGroup(
 			pullRequest.branchName = rerunBranchName;
 			const rerunPushResult = await runGroupCommand('git', ['push', '--set-upstream', 'origin', rerunBranchName]);
 			if (rerunPushResult.exitCode === 0) {
-				const prArgs = ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body];
-				if (pullRequest.baseBranch) {
-					prArgs.push('--base', pullRequest.baseBranch);
-				}
-				const prResult = await runGroupCommand('gh', prArgs);
+				const prResult = await createPullRequestWithRetry(runGroupCommand, pullRequest);
 				if (prResult.exitCode !== 0) {
 					return {
 						status: 'failed',
@@ -349,11 +387,7 @@ export async function executeRemediationGroup(
 		};
 	}
 
-	const prArgs = ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body];
-	if (pullRequest.baseBranch) {
-		prArgs.push('--base', pullRequest.baseBranch);
-	}
-	const prResult = await runGroupCommand('gh', prArgs);
+	const prResult = await createPullRequestWithRetry(runGroupCommand, pullRequest);
 	if (prResult.exitCode !== 0) {
 		return {
 			status: 'failed',

@@ -149,6 +149,54 @@ test('passes the current branch as gh pr create base when provided', async () =>
 	);
 });
 
+test('retries transient gh pr create failures before succeeding', async () => {
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			let prAttempts = 0;
+			const result = await executeRemediationGroup(baseGroup, cwd, async (command: string, args: string[]) => {
+				if (command === 'gh') {
+					prAttempts += 1;
+					if (prAttempts < 3) {
+						return {
+							command: [command, ...args].join(' '),
+							exitCode: 1,
+							outputSummary:
+								"pull request create failed: HTTP 504: We couldn't respond to your request in time. (https://api.github.com/graphql)",
+							stdout: '',
+							stderr:
+								"pull request create failed: HTTP 504: We couldn't respond to your request in time. (https://api.github.com/graphql)",
+						};
+					}
+
+					return {
+						command: [command, ...args].join(' '),
+						exitCode: 0,
+						outputSummary: 'https://github.com/example/repo/pull/101',
+						stdout: 'https://github.com/example/repo/pull/101\n',
+						stderr: '',
+					};
+				}
+
+				return okResult(command, args);
+			});
+
+			assert.equal(result.status, 'published');
+			assert.equal(prAttempts, 3);
+			assert.equal(result.pullRequest.url, 'https://github.com/example/repo/pull/101');
+		},
+	);
+});
+
 test('returns failed when deterministic patch generation cannot match the anchored code', async () => {
 	await withTempCwd(
 		{
