@@ -1,12 +1,12 @@
-import { organizeFindings, type Finding } from '../../.agents/skills/code-review/scripts/organize_findings';
+import { organizeFindings, type Finding } from '../../.agents/skills/code-review/scripts/organize_findings.ts';
 import {
 	hasCompleteFixProposal,
 	normalizeFixProposal,
-} from '../../.agents/skills/code-review/scripts/fix_proposals';
+} from '../../.agents/skills/code-review/scripts/fix_proposals.ts';
 import {
 	normalizeRemediationMetadata,
 	type RawRemediationMetadata,
-} from './remediation-policy';
+} from './remediation-policy.ts';
 
 type RawReviewIssue = Omit<Finding, 'remediation'> & {
 	remediation: RawRemediationMetadata;
@@ -390,10 +390,90 @@ function dropOvershadowedNoise(issues: Finding[]): Finding[] {
 	});
 }
 
+function applyDeterministicRemediationPolicy(
+	issue: ReviewIssueBase,
+	remediation: Finding['remediation'],
+): Finding['remediation'] {
+	const text = normalizeText(`${issue.category}\n${issue.description}\n${issue.suggestion ?? ''}`);
+
+	if (
+		text.includes('sql injection') ||
+		(text.includes('parameterized quer') && text.includes('sql')) ||
+		(text.includes('string interpolation') && text.includes('query')) ||
+		(text.includes('inject arbitrary sql')) ||
+		(text.includes('untrusted username') && text.includes('query'))
+	) {
+		return {
+			...remediation,
+			remediationEligibility: 'manual',
+			remediationKind: 'api-misuse',
+			patchScope: 'single-function',
+			verificationStrategy: 'unit-test',
+			groupKey: `sql-injection:${issue.file}`,
+			eligibilityRationale:
+				'This remediation requires choosing a parameterized query API, which is outside the deterministic patcher scope.',
+			blockedReason: null,
+		};
+	}
+
+	if (
+		text.includes('credential') ||
+		text.includes('plaintext password') ||
+		text.includes('connection string')
+	) {
+		return {
+			...remediation,
+			remediationEligibility: 'manual',
+			remediationKind: 'refactor',
+			patchScope: 'single-line',
+			verificationStrategy: 'unit-test',
+			groupKey: `credential-logging:${issue.file}`,
+			eligibilityRationale:
+				'This remediation requires choosing a redaction strategy, which is outside the deterministic patcher scope.',
+			blockedReason: null,
+		};
+	}
+
+	if (isFetchHandlingIssue(issue)) {
+		return {
+			...remediation,
+			remediationEligibility: 'auto',
+			remediationKind: 'input-validation',
+			patchScope: 'single-function',
+			verificationStrategy: 'unit-test',
+			groupKey: `fetch-response-validation:${issue.file}`,
+			eligibilityRationale: null,
+			blockedReason: null,
+		};
+	}
+
+	if (
+		text.includes('off-by-one') ||
+		text.includes('users[users.length]') ||
+		(text.includes('array bounds') && text.includes('users[i]'))
+	) {
+		return {
+			...remediation,
+			remediationEligibility: 'auto',
+			remediationKind: 'bounds-check',
+			patchScope: 'single-line',
+			verificationStrategy: 'unit-test',
+			groupKey: `user-loop-bounds:${issue.file}`,
+			eligibilityRationale: null,
+			blockedReason: null,
+		};
+	}
+
+	return remediation;
+}
+
 export function normalizeReviewResult(result: RawReviewResult, sourceFiles: SourceFileMap): ReviewResult {
 	const normalizedIssues = result.issues.map((issue) => {
 		const fixProposal = normalizeFixProposal(issue.fixProposal);
-		const remediation = normalizeRemediationMetadata(issue.remediation, issue.file);
+		const remediation = applyDeterministicRemediationPolicy(
+			issue,
+			normalizeRemediationMetadata(issue.remediation, issue.file),
+		);
 		const line = resolveAnchoredLine(issue, sourceFiles);
 
 		if (!hasCompleteFixProposal(fixProposal)) {

@@ -8,7 +8,7 @@ import type {
 import {
 	cleanOptionalSupportText,
 	cleanSupportText,
-} from '../../.agents/skills/code-review/scripts/fix_proposals';
+} from '../../.agents/skills/code-review/scripts/fix_proposals.ts';
 
 const eligibilityFallback: RemediationEligibility = 'manual';
 const kindFallback: RemediationKind = 'refactor';

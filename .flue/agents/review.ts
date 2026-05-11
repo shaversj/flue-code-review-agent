@@ -20,6 +20,7 @@ import { createBranchName, createPullRequestBody, createPullRequestTitle } from 
 import { writeRemediationExecutionArtifact } from '../lib/remediation-artifacts';
 import { buildAndWriteRemediationPlan } from '../lib/remediation-plan';
 import { executeRemediationGroup } from '../lib/remediation-executor';
+import { linkWorktreeDependencies } from '../lib/remediation-worktree';
 import type { CommandResult } from '../lib/remediation-commands';
 import type { RemediationExecutionResult, RemediationGroup } from '../lib/remediation-types';
 
@@ -222,6 +223,7 @@ async function withRemediationWorktree<T>(
 	}
 
 	try {
+		await linkWorktreeDependencies(repoCwd, worktreeCwd);
 		return await run(worktreeCwd);
 	} finally {
 		await runCommand('git', ['worktree', 'remove', '--force', worktreeCwd], repoCwd);
