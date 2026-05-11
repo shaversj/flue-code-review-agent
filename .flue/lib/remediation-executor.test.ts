@@ -171,6 +171,68 @@ test('returns failed when verification fails and preserves branch payload after 
 	);
 });
 
+test('retries on a non-fast-forward push by publishing from a unique rerun branch', async () => {
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const calls: string[] = [];
+			let pushAttempts = 0;
+			const result = await executeRemediationGroup(baseGroup, cwd, async (command: string, args: string[]) => {
+				const rendered = [command, ...args].join(' ');
+				calls.push(rendered);
+
+				if (command === 'git' && args[0] === 'push') {
+					pushAttempts += 1;
+					if (pushAttempts === 1) {
+						return {
+							command: rendered,
+							exitCode: 1,
+							outputSummary: 'non-fast-forward',
+							stdout: '',
+							stderr: 'Updates were rejected because the tip of your current branch is behind its remote counterpart.',
+						};
+					}
+				}
+
+				if (command === 'gh') {
+					return {
+						command: rendered,
+						exitCode: 0,
+						outputSummary: 'https://github.com/example/repo/pull/77',
+						stdout: 'https://github.com/example/repo/pull/77\n',
+						stderr: '',
+					};
+				}
+
+				return okResult(command, args);
+			});
+
+			assert.equal(result.status, 'published');
+			assert.equal(pushAttempts, 2);
+			assert.match(result.pullRequest.branchName, /^codex\/remediate\/bounds-check\/group-1-rerun-/);
+			assert.ok(
+				calls.some((call) =>
+					/^git checkout -B codex\/remediate\/bounds-check\/group-1-rerun-/.test(call),
+				),
+			);
+			assert.ok(
+				calls.some((call) =>
+					/^git push --set-upstream origin codex\/remediate\/bounds-check\/group-1-rerun-/.test(call),
+				),
+			);
+		},
+	);
+});
+
 test('applies the patch using cwd-relative file remapping for group files and anchored instructions', async () => {
 	await withTempCwd(
 		{

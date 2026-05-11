@@ -80,6 +80,23 @@ function lineIndentation(line: string): string {
 	return match?.[0] ?? '';
 }
 
+function findInputValidationInsertionIndex(
+	lines: string[],
+	index: number,
+): number | null {
+	const anchoredLine = lines[index] ?? '';
+	if (anchoredLine.includes('return response.json()')) {
+		return index;
+	}
+
+	if (anchoredLine.includes('const response = await fetch(url);')) {
+		const nextLine = lines[index + 1] ?? '';
+		return nextLine.includes('return response.json()') ? index + 1 : null;
+	}
+
+	return null;
+}
+
 async function saveLoadedFile(loaded: LoadedFile): Promise<RemediationPatchResult | null> {
 	try {
 		const contents = loaded.lines.join(loaded.newline);
@@ -194,14 +211,15 @@ async function applyInputValidationPatch(group: RemediationGroup): Promise<Remed
 		};
 	}
 
-	if (!anchoredLine.line.includes('return response.json()')) {
+	const insertionIndex = findInputValidationInsertionIndex(loaded.lines, anchoredLine.index);
+	if (insertionIndex == null) {
 		return {
 			status: 'failed',
 			reason: 'Anchored code does not match a supported pattern for input-validation patching.',
 		};
 	}
 
-	const previousLine = loaded.lines[anchoredLine.index - 1] ?? '';
+	const previousLine = loaded.lines[insertionIndex - 1] ?? '';
 	if (!previousLine.includes('const response = await fetch(url);')) {
 		return {
 			status: 'failed',
@@ -209,10 +227,10 @@ async function applyInputValidationPatch(group: RemediationGroup): Promise<Remed
 		};
 	}
 
-	const baseIndent = lineIndentation(anchoredLine.line);
+	const baseIndent = lineIndentation(loaded.lines[insertionIndex] ?? '');
 	const nestedIndent = `${baseIndent}\t`;
 	loaded.lines.splice(
-		anchoredLine.index,
+		insertionIndex,
 		0,
 		`${baseIndent}if (!('ok' in response) || !response.ok) {`,
 		`${nestedIndent}throw new Error('Request failed');`,

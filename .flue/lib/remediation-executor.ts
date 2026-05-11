@@ -61,6 +61,15 @@ function toWorktreePathspecs(files: string[], cwd: string): string[] | null {
 	return [...new Set(pathspecs)];
 }
 
+function isNonFastForwardPushFailure(result: CommandResult): boolean {
+	const text = `${result.outputSummary}\n${result.stderr}\n${result.stdout}`.toLowerCase();
+	return text.includes('non-fast-forward') || text.includes('tip of your current branch is behind');
+}
+
+function createRerunBranchName(branchName: string): string {
+	return `${branchName}-rerun-${Date.now().toString(36)}`;
+}
+
 async function createPreparedPullRequest(
 	group: RemediationGroup,
 	verification: VerificationResult[] = [],
@@ -276,6 +285,53 @@ export async function executeRemediationGroup(
 
 	const pushResult = await runGroupCommand('git', ['push', '--set-upstream', 'origin', pullRequest.branchName]);
 	if (pushResult.exitCode !== 0) {
+		if (isNonFastForwardPushFailure(pushResult)) {
+			const rerunBranchName = createRerunBranchName(pullRequest.branchName);
+			const rerunBranchResult = await runGroupCommand('git', ['checkout', '-B', rerunBranchName]);
+			if (rerunBranchResult.exitCode !== 0) {
+				return {
+					status: 'failed',
+					groupId: group.id,
+					publishStep: 'push',
+					reason: rerunBranchResult.outputSummary,
+					pullRequest,
+				};
+			}
+
+			pullRequest.branchName = rerunBranchName;
+			const rerunPushResult = await runGroupCommand('git', ['push', '--set-upstream', 'origin', rerunBranchName]);
+			if (rerunPushResult.exitCode === 0) {
+				const prResult = await runGroupCommand('gh', ['pr', 'create', '--title', pullRequest.title, '--body', pullRequest.body]);
+				if (prResult.exitCode !== 0) {
+					return {
+						status: 'failed',
+						groupId: group.id,
+						publishStep: 'pr-create',
+						reason: prResult.outputSummary,
+						pullRequest,
+					};
+				}
+
+				return {
+					status: 'published',
+					groupId: group.id,
+					publishStep: 'pr-create',
+					pullRequest: {
+						...pullRequest,
+						url: prResult.stdout.trim() || prResult.outputSummary,
+					},
+				};
+			}
+
+			return {
+				status: 'failed',
+				groupId: group.id,
+				publishStep: 'push',
+				reason: rerunPushResult.outputSummary,
+				pullRequest,
+			};
+		}
+
 		return {
 			status: 'failed',
 			groupId: group.id,

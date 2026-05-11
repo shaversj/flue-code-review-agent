@@ -335,6 +335,47 @@ test('applies a narrow input-validation patch before response.json()', async () 
 	);
 });
 
+test('applies the input-validation patch when the finding is anchored on the fetch line', async () => {
+	await withTempFile(
+		'code.ts',
+		[
+			'export async function loadData(url: string) {',
+			'\tconst response = await fetch(url);',
+			'\treturn response.json();',
+			'}',
+			'',
+		].join('\n'),
+		async (filePath) => {
+			const group: RemediationGroup = {
+				id: 'group-2-fetch',
+				groupKey: 'input-validation:test',
+				remediationKind: 'input-validation',
+				verificationStrategy: 'unit-test',
+				files: [filePath],
+				instructions: [
+					{
+						file: filePath,
+						line: 2,
+						fixSummary: 'Guard against non-ok fetch responses before parsing JSON.',
+						recommendedDirection: 'Check response.ok before calling response.json().',
+						verificationHint: 'Run typecheck after inserting the guard.',
+					},
+				],
+				issues: [{ file: filePath, line: 2, description: 'Unchecked fetch response.' }],
+			};
+
+			const result = await applyDeterministicRemediationPatch(group);
+			const updated = await readFile(filePath, 'utf8');
+
+			assert.equal(result.status, 'applied');
+			assert.deepEqual(result.files, [filePath]);
+			assert.match(updated, /if \(!\('ok' in response\) \|\| !response\.ok\) \{/);
+			assert.match(updated, /throw new Error\('Request failed'\);/);
+			assert.match(updated, /return response\.json\(\);/);
+		},
+	);
+});
+
 test('fails closed for unsupported remediation kinds', async () => {
 	await withTempFile(
 		'code.ts',
