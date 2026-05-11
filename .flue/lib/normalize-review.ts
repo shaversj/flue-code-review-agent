@@ -35,10 +35,10 @@ const categoryAliases: Record<string, Finding['category']> = {
 };
 
 const severityWeight: Record<Finding['severity'], number> = {
-	critical: 20,
-	high: 12,
-	medium: 5,
-	low: 2,
+	critical: 25,
+	high: 15,
+	medium: 8,
+	low: 3,
 };
 
 const severityRank: Record<Finding['severity'], number> = {
@@ -94,7 +94,7 @@ function applySeverityPolicy(issue: ReviewIssueBase): Finding['severity'] {
 		text.includes('password is embedded') ||
 		text.includes('connection string')
 	) {
-		return severityRank[issue.severity] < severityRank.high ? 'high' : issue.severity;
+		return 'high';
 	}
 
 	if (isFetchHandlingIssue(issue)) {
