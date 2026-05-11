@@ -10,15 +10,16 @@ This project runs a structured code review over a scoped set of source files and
 - a deterministic score and summary
 - saved review artifacts under `.review-runs/`
 
-The pipeline can also produce remediation planning artifacts for high-confidence findings.
-These artifacts group auto-eligible issues into bounded remediation units and prepare
-verification-aware PR payloads for downstream execution.
+The pipeline can also plan and execute bounded remediation for supported, high-confidence findings.
+Auto-eligible issues are grouped into deterministic remediation units, patched in isolated worktrees,
+verified, and then published as branch-relative GitHub PRs when all gates pass.
 
 The current pipeline is optimized for:
 
 - material bug finding over style commentary
 - stable line anchors and severity labels
 - reduced drift across repeated runs
+- conservative, auditable remediation publishing
 
 ## How It Works
 
@@ -27,7 +28,9 @@ The review flow is:
 1. Collect candidate files with deterministic filtering.
 2. Call the `code-review` skill to inspect those files.
 3. Normalize the raw model output into a more stable result.
-4. Render terminal output and save run artifacts.
+4. Group auto-eligible findings into remediation units.
+5. For each eligible group, patch in an isolated worktree, verify, and publish or record failure.
+6. Render terminal output and save run artifacts.
 
 Main runtime entrypoint:
 
@@ -86,11 +89,35 @@ Consistency comes from two layers:
 
 This project intentionally uses evals to catch drift rather than relying on prompt wording alone.
 
+Known patterns in the example fixture are normalized onto a fixed policy:
+
+- SQL injection => `critical`
+- credential logging => `high`
+- off-by-one loop bounds => `high`
+- unchecked fetch response status => `medium`
+
+The final score is derived from normalized findings rather than trusting the raw model score.
+
+## Remediation PR Flow
+
+Supported remediation groups run through a bounded publish pipeline:
+
+1. Create an isolated worktree rooted at the current branch.
+2. Apply a deterministic patch for supported kinds such as `bounds-check` and `input-validation`.
+3. Run verification commands for that group.
+4. Push a remediation branch if verification passes.
+5. Create a PR, or reuse an existing open PR for the same remediation group.
+
+PR dedupe is based on a hidden remediation-group marker in the PR body rather than PR title.
+When a matching open PR already exists, the runtime records `already-open` and prints that URL
+to the terminal instead of creating a duplicate PR.
+
 ## Evals
 
 Eval scripts live in:
 
 - [.flue/evals/eval-golden-latest.mjs](/Users/wu36/Code/agents/flue-code-review-agent/.flue/evals/eval-golden-latest.mjs:1)
+- [.flue/evals/eval-remediation-latest.mjs](/Users/wu36/Code/agents/flue-code-review-agent/.flue/evals/eval-remediation-latest.mjs:1)
 - [.flue/evals/eval-stability.mjs](/Users/wu36/Code/agents/flue-code-review-agent/.flue/evals/eval-stability.mjs:1)
 
 Available commands:
@@ -98,13 +125,15 @@ Available commands:
 ```bash
 pnpm run check:types
 pnpm run eval:golden
+pnpm run eval:remediation
 pnpm run eval:stability
 ```
 
 What they do:
 
 - `check:types`: runs TypeScript type checking
-- `eval:golden`: validates the latest saved review run against the expected baseline
+- `eval:golden`: validates the latest blessed review run against the deterministic baseline
+- `eval:remediation`: validates the latest blessed remediation plan and execution artifacts
 - `eval:stability`: summarizes variance across saved review runs in `.review-runs`
 
 ## Run Artifacts
@@ -130,8 +159,22 @@ Remediation-enabled runs may also include:
 
 `remediation-executions.json` records per-group remediation results in a
 `results` array, including publish status, branch name, verification results,
-failure reason, and PR URL when publication succeeds. Older saved runs may
-still use the legacy top-level array shape.
+failure reason, and PR URL when publication succeeds or an existing PR is reused.
+Current statuses include:
+
+- `published`
+- `already-open`
+- `failed`
+- `skipped`
+- `prepared`
+
+Older saved runs may still use the legacy top-level array shape.
+
+Terminal output also includes a remediation summary after the review summary so you can see:
+
+- how many groups were published, reused, failed, or skipped
+- the URL for each created or reused PR
+- the failing step and reason for unsuccessful groups
 
 ## Development Notes
 
@@ -140,3 +183,4 @@ still use the legacy top-level array shape.
   confidence decides whether to report a finding at all
   severity decides how serious it is once it is considered real
 - The runtime should stay general-purpose; fixture-specific expectations belong in evals, not normal output generation.
+- The deterministic patcher is intentionally narrow and fails closed when a supported local pattern is not matched exactly.
