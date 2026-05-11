@@ -12,7 +12,7 @@ declare function fetch(url: string): Promise<{
 }>;
 
 export function processUsers(users: User[]): void {
-	for (let i = 0; i <= users.length; i += 1) {
+	for (let i = 0; i < users.length; i += 1) {
 		console.log(users[i]!.name.toUpperCase());
 	}
 }
