@@ -6,6 +6,7 @@ import {
 } from './remediation-commands.ts';
 import {
 	createBranchName,
+	createPullRequestDedupeMarker,
 	createPullRequestBody,
 	createPullRequestTitle,
 } from './remediation-pr-body.ts';
@@ -16,6 +17,7 @@ import type {
 	RemediationGroup,
 	RemediationPatchFailure,
 	RemediationPatchResult,
+	RemediationAlreadyOpenResult,
 	VerificationResult,
 } from './remediation-types';
 
@@ -126,6 +128,56 @@ async function createPreparedPullRequest(
 	};
 }
 
+type ExistingPullRequest = {
+	url: string;
+	body: string;
+};
+
+async function findExistingOpenPullRequest(
+	group: RemediationGroup,
+	runGroupCommand: CommandRunner,
+	baseBranch?: string,
+): Promise<ExistingPullRequest | null> {
+	const args = ['pr', 'list', '--state', 'open', '--json', 'url,body'];
+	if (baseBranch) {
+		args.push('--base', baseBranch);
+	}
+
+	const result = await runGroupCommand('gh', args);
+	if (result.exitCode !== 0) {
+		return null;
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(result.stdout);
+	} catch {
+		return null;
+	}
+
+	if (!Array.isArray(parsed)) {
+		return null;
+	}
+
+	const marker = createPullRequestDedupeMarker(group);
+	for (const item of parsed) {
+		if (
+			item &&
+			typeof item === 'object' &&
+			typeof item.url === 'string' &&
+			typeof item.body === 'string' &&
+			item.body.includes(marker)
+		) {
+			return {
+				url: item.url,
+				body: item.body,
+			};
+		}
+	}
+
+	return null;
+}
+
 async function runVerificationCommands(
 	group: RemediationGroup,
 	run: CommandRunner,
@@ -210,6 +262,22 @@ function remapGroupToCwd(
 		files: remappedFiles,
 		instructions: remappedInstructions,
 		issues: remappedIssues,
+	};
+}
+
+function createAlreadyOpenResult(
+	group: RemediationGroup,
+	pullRequest: PreparedPullRequest,
+	url: string,
+): RemediationAlreadyOpenResult {
+	return {
+		status: 'already-open',
+		groupId: group.id,
+		publishStep: 'pr-create',
+		pullRequest: {
+			...pullRequest,
+			url,
+		},
 	};
 }
 
@@ -328,6 +396,11 @@ export async function executeRemediationGroup(
 	}
 
 	pullRequest.body = createPullRequestBody(group, verification);
+
+	const existingPullRequest = await findExistingOpenPullRequest(group, runGroupCommand, pullRequest.baseBranch);
+	if (existingPullRequest) {
+		return createAlreadyOpenResult(group, pullRequest, existingPullRequest.url);
+	}
 
 	const pushResult = await runGroupCommand('git', ['push', '--set-upstream', 'origin', pullRequest.branchName]);
 	if (pushResult.exitCode !== 0) {

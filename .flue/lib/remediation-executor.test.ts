@@ -71,6 +71,15 @@ test('returns published when a deterministic patch applies inside the target cwd
 				calls.push([command, ...args].join(' '));
 
 				if (command === 'gh') {
+					if (args[1] === 'list') {
+						return {
+							command: [command, ...args].join(' '),
+							exitCode: 0,
+							outputSummary: '[]',
+							stdout: '[]',
+							stderr: '',
+						};
+					}
 					return {
 						command: [command, ...args].join(' '),
 						exitCode: 0,
@@ -90,14 +99,15 @@ test('returns published when a deterministic patch applies inside the target cwd
 			assert.equal(result.pullRequest.url, 'https://github.com/example/repo/pull/1');
 			assert.equal(result.pullRequest.verification.length, 1);
 			assert.match(updated, /i < users\.length/);
-			assert.deepEqual(calls.slice(0, 5), [
+			assert.deepEqual(calls.slice(0, 6), [
 				'git checkout -B codex/remediate/bounds-check/group-1',
 				'git add -- src/example.ts',
 				'git commit --only -m fix: remediate bounds-check findings in src/example.ts -- src/example.ts',
 				'pnpm run check:types',
+				'gh pr list --state open --json url,body',
 				'git push --set-upstream origin codex/remediate/bounds-check/group-1',
 			]);
-			assert.match(calls[5] ?? '', /^gh pr create --title fix: remediate bounds-check findings in src\/example\.ts --body /);
+			assert.match(calls[6] ?? '', /^gh pr create --title fix: remediate bounds-check findings in src\/example\.ts --body /);
 		},
 	);
 });
@@ -123,6 +133,15 @@ test('passes the current branch as gh pr create base when provided', async () =>
 					calls.push([command, ...args].join(' '));
 
 					if (command === 'gh') {
+						if (args[1] === 'list') {
+							return {
+								command: [command, ...args].join(' '),
+								exitCode: 0,
+								outputSummary: '[]',
+								stdout: '[]',
+								stderr: '',
+							};
+						}
 						return {
 							command: [command, ...args].join(' '),
 							exitCode: 0,
@@ -149,6 +168,66 @@ test('passes the current branch as gh pr create base when provided', async () =>
 	);
 });
 
+test('reuses an existing open remediation pr for the same group marker instead of creating a duplicate', async () => {
+	await withTempCwd(
+		{
+			'src/example.ts': [
+				'export function processUsers(users: { name: string }[]): void {',
+				'\tfor (let i = 0; i <= users.length; i += 1) {',
+				'\t\tconsole.log(users[i]!.name.toUpperCase());',
+				'\t}',
+				'}',
+				'',
+			].join('\n'),
+		},
+		async (cwd) => {
+			const calls: string[] = [];
+			const result = await executeRemediationGroup(
+				baseGroup,
+				cwd,
+				async (command: string, args: string[]) => {
+					const rendered = [command, ...args].join(' ');
+					calls.push(rendered);
+
+					if (command === 'gh' && args[1] === 'list') {
+						return {
+							command: rendered,
+							exitCode: 0,
+							outputSummary: 'existing pr found',
+							stdout: JSON.stringify([
+								{
+									url: 'https://github.com/example/repo/pull/55',
+									body: [
+										'## Why',
+										'This PR remediates a grouped set of high-confidence review findings.',
+										'',
+										'<!-- remediation-group-key:bounds-check:src/example.ts -->',
+									].join('\n'),
+								},
+							]),
+							stderr: '',
+						};
+					}
+
+					if (command === 'gh' && args[1] === 'create') {
+						assert.fail('expected existing remediation PR to skip gh pr create');
+					}
+
+					return okResult(command, args);
+				},
+				process.cwd(),
+				'skill-version',
+			);
+
+			assert.equal(result.status, 'already-open');
+			assert.equal(result.pullRequest.url, 'https://github.com/example/repo/pull/55');
+			assert.ok(calls.includes('gh pr list --state open --json url,body --base skill-version'));
+			assert.ok(!calls.some((call) => call.startsWith('git push --set-upstream origin')));
+			assert.ok(!calls.some((call) => call.startsWith('gh pr create')));
+		},
+	);
+});
+
 test('retries transient gh pr create failures before succeeding', async () => {
 	await withTempCwd(
 		{
@@ -165,6 +244,15 @@ test('retries transient gh pr create failures before succeeding', async () => {
 			let prAttempts = 0;
 			const result = await executeRemediationGroup(baseGroup, cwd, async (command: string, args: string[]) => {
 				if (command === 'gh') {
+					if (args[1] === 'list') {
+						return {
+							command: [command, ...args].join(' '),
+							exitCode: 0,
+							outputSummary: '[]',
+							stdout: '[]',
+							stderr: '',
+						};
+					}
 					prAttempts += 1;
 					if (prAttempts < 3) {
 						return {
@@ -299,6 +387,15 @@ test('retries on a non-fast-forward push by publishing from a unique rerun branc
 				}
 
 				if (command === 'gh') {
+					if (args[1] === 'list') {
+						return {
+							command: rendered,
+							exitCode: 0,
+							outputSummary: '[]',
+							stdout: '[]',
+							stderr: '',
+						};
+					}
 					return {
 						command: rendered,
 						exitCode: 0,
@@ -362,6 +459,15 @@ test('applies the patch using cwd-relative file remapping for group files and an
 				calls.push([command, ...args].join(' '));
 
 				if (command === 'gh') {
+					if (args[1] === 'list') {
+						return {
+							command: [command, ...args].join(' '),
+							exitCode: 0,
+							outputSummary: '[]',
+							stdout: '[]',
+							stderr: '',
+						};
+					}
 					return {
 						command: [command, ...args].join(' '),
 						exitCode: 0,
@@ -436,6 +542,15 @@ test('rebases absolute source-checkout paths into the target cwd before patching
 					calls.push([command, ...args].join(' '));
 
 					if (command === 'gh') {
+						if (args[1] === 'list') {
+							return {
+								command: [command, ...args].join(' '),
+								exitCode: 0,
+								outputSummary: '[]',
+								stdout: '[]',
+								stderr: '',
+							};
+						}
 						return {
 							command: [command, ...args].join(' '),
 							exitCode: 0,

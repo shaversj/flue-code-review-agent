@@ -12,6 +12,10 @@ export function createPullRequestTitle(group: RemediationGroup): string {
 	return `fix: remediate ${group.remediationKind} findings in ${group.files[0]}`;
 }
 
+export function createPullRequestDedupeMarker(group: RemediationGroup): string {
+	return `<!-- remediation-group-key:${group.groupKey} -->`;
+}
+
 export function createPullRequestBody(group: RemediationGroup, verification: VerificationResult[]): string {
 	const bullets = group.instructions
 		.map((instruction) => `- ${instruction.file}:${instruction.line ?? '-'} ${instruction.fixSummary}`)
@@ -29,5 +33,7 @@ export function createPullRequestBody(group: RemediationGroup, verification: Ver
 		'',
 		'## Verification',
 		verificationLines,
+		'',
+		createPullRequestDedupeMarker(group),
 	].join('\n');
 }

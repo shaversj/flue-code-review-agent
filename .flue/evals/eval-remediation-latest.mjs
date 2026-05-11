@@ -250,7 +250,9 @@ if (latest.remediationExecutions != null) {
 		);
 	}
 
-	const publishedOrFailed = executionResults.filter((item) => item?.status === 'published' || item?.status === 'failed');
+	const publishedOrFailed = executionResults.filter(
+		(item) => item?.status === 'published' || item?.status === 'already-open' || item?.status === 'failed',
+	);
 
 	if (publishedOrFailed.length === 0) {
 		fail('Expected remediation executions to include at least one attempted group.');
@@ -260,8 +262,8 @@ if (latest.remediationExecutions != null) {
 		if (!item.pullRequest?.branchName) {
 			fail(`Missing branch name for remediation group ${item.groupId}.`);
 		}
-		if (item.status === 'published' && !item.pullRequest.url) {
-			fail(`Missing PR URL for published remediation group ${item.groupId}.`);
+		if ((item.status === 'published' || item.status === 'already-open') && !item.pullRequest.url) {
+			fail(`Missing PR URL for remediation group ${item.groupId} with status ${item.status}.`);
 		}
 		if (item.status === 'failed' && !item.reason) {
 			fail(`Missing failure reason for remediation group ${item.groupId}.`);

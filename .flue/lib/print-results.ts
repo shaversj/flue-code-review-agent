@@ -1,4 +1,5 @@
 import type { Finding } from '../../.agents/skills/code-review/scripts/organize_findings';
+import type { RemediationExecutionResult } from './remediation-types';
 
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
@@ -22,6 +23,7 @@ export type ReviewResultWithReport = {
 export type PrintResultsOptions = {
 	mode?: 'compact' | 'verbose';
 	useColor?: boolean;
+	remediationExecutions?: RemediationExecutionResult[];
 	usage?: {
 		numTurns: number;
 		inputTokens: number;
@@ -46,6 +48,70 @@ function scoreColor(score: number): string {
 
 function oneLine(value: string): string {
 	return value.replace(/\s+/g, ' ').trim();
+}
+
+export function formatRemediationResults(
+	results: RemediationExecutionResult[],
+	options: Pick<PrintResultsOptions, 'useColor'> = {},
+): string {
+	if (results.length === 0) {
+		return '';
+	}
+
+	const useColor = options.useColor ?? true;
+	const separator = '='.repeat(50);
+	const paint = (text: string, ...codes: string[]) => (useColor ? colorize(text, ...codes) : text);
+	const counts = {
+		published: results.filter((result) => result.status === 'published').length,
+		alreadyOpen: results.filter((result) => result.status === 'already-open').length,
+		failed: results.filter((result) => result.status === 'failed').length,
+		skipped: results.filter((result) => result.status === 'skipped').length,
+		prepared: results.filter((result) => result.status === 'prepared').length,
+	};
+	const lines: string[] = [];
+
+	lines.push('');
+	lines.push(paint(separator, DIM));
+	lines.push(paint('REMEDIATION RESULTS', BOLD, CYAN));
+	lines.push(`${paint(separator, DIM)}\n`);
+
+	const countParts = [
+		`Published: ${counts.published}`,
+		`Existing: ${counts.alreadyOpen}`,
+		`Failed: ${counts.failed}`,
+		`Skipped: ${counts.skipped}`,
+	];
+	if (counts.prepared > 0) {
+		countParts.push(`Prepared: ${counts.prepared}`);
+	}
+	lines.push(countParts.join('  '));
+
+	for (const result of results) {
+		if (result.status === 'published') {
+			lines.push(`PR created for ${result.groupId}: ${result.pullRequest.url}`);
+			continue;
+		}
+
+		if (result.status === 'already-open') {
+			lines.push(`PR already exists for ${result.groupId}: ${result.pullRequest.url}`);
+			continue;
+		}
+
+		if (result.status === 'failed') {
+			lines.push(`Failed ${result.groupId} at ${result.publishStep}: ${oneLine(result.reason)}`);
+			continue;
+		}
+
+		if (result.status === 'skipped') {
+			lines.push(`Skipped ${result.groupId}: ${oneLine(result.reason)}`);
+			continue;
+		}
+
+		lines.push(`Prepared ${result.groupId}: ${result.pullRequest.branchName}`);
+	}
+
+	lines.push('');
+	return lines.join('\n');
 }
 
 export function formatResults(
@@ -127,7 +193,10 @@ export function formatResults(
 		lines.push('');
 	}
 
-	return lines.join('\n');
+	const remediationSummary = formatRemediationResults(options.remediationExecutions ?? [], {
+		useColor,
+	});
+	return remediationSummary ? `${lines.join('\n')}${remediationSummary}` : lines.join('\n');
 }
 
 export function printResults(

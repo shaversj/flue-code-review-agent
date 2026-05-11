@@ -14,7 +14,7 @@ export const verificationStrategyValues = [
 	'existing-test-update',
 	'typecheck-only',
 ] as const;
-export const remediationExecutionStatusValues = ['prepared', 'skipped', 'published', 'failed'] as const;
+export const remediationExecutionStatusValues = ['prepared', 'skipped', 'published', 'already-open', 'failed'] as const;
 export const remediationPublishStepValues = [
 	'branch',
 	'patch',
@@ -103,6 +103,15 @@ export type RemediationPublishSuccess = {
 	};
 };
 
+export type RemediationAlreadyOpenResult = {
+	status: 'already-open';
+	groupId: string;
+	publishStep: 'pr-create';
+	pullRequest: PreparedPullRequest & {
+		url: string;
+	};
+};
+
 export type RemediationPublishFailure = {
 	status: 'failed';
 	groupId: string;
@@ -122,5 +131,6 @@ export type RemediationSkippedResult = {
 export type RemediationExecutionResult =
 	| RemediationPreparedResult
 	| RemediationPublishSuccess
+	| RemediationAlreadyOpenResult
 	| RemediationPublishFailure
 	| RemediationSkippedResult;

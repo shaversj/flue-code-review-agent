@@ -400,7 +400,7 @@ export default async function (ctx: FlueContext) {
 		},
 	});
 
-	printResults(response, { mode: 'verbose' });
+	printResults(response, { mode: 'verbose', remediationExecutions });
 
 	const screenResponse: ReviewScreenResponse = {
 		runId: response.runId,
