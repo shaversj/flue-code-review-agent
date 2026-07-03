@@ -1,52 +1,70 @@
-# flue-code-review-agent
+# Flue Code Review Agent
 
-A Flue-based code review agent focused on producing consistent, high-signal review findings.
+[![CI](https://github.com/shaversj/flue-code-review-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/shaversj/flue-code-review-agent/actions/workflows/ci.yml)
+![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue)
+![Node](https://img.shields.io/badge/Node.js-22-green)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## What It Does
+An agentic code review workflow built with Flue for consistent, high-signal pull request review and bounded remediation planning.
 
-This project runs a structured code review over a scoped set of source files and returns:
+The project demonstrates how a review agent can combine a rubric-driven skill, deterministic normalization, severity policy, saved artifacts, and conservative remediation publishing. The goal is not generic AI commentary. The goal is repeatable review output that engineers can trust.
 
-- a normalized list of findings with severity, category, file, and line
-- a deterministic score and summary
-- saved review artifacts under `.review-runs/`
+## Try It
 
-The pipeline can also plan and execute bounded remediation for supported, high-confidence findings.
-Auto-eligible issues are grouped into deterministic remediation units, patched in isolated worktrees,
-verified, and then published as branch-relative GitHub PRs when all gates pass.
+```bash
+pnpm install
+pnpm run check:types
+```
 
-The current pipeline is optimized for:
+The full review/eval workflow expects saved `.review-runs/` artifacts from local Flue runs. The deterministic typecheck path is the default CI gate.
 
-- material bug finding over style commentary
-- stable line anchors and severity labels
-- reduced drift across repeated runs
-- conservative, auditable remediation publishing
+## What To Notice
 
-## How It Works
+- The review skill is a structured playbook, not a free-form prompt.
+- Findings are normalized after model output to reduce drift.
+- Severity and confidence are treated separately.
+- Supported remediation groups are narrow, auditable, and fail closed.
+- PR publishing dedupes by hidden remediation-group markers instead of titles.
+- Saved run artifacts make review behavior inspectable after the fact.
 
-The review flow is:
+## Architecture
+
+```mermaid
+flowchart LR
+    A["Candidate files"] --> B["code-review skill"]
+    B --> C["Raw model findings"]
+    C --> D["Deterministic normalization"]
+    D --> E["Severity and confidence policy"]
+    E --> F["Remediation grouping"]
+    F --> G["Isolated worktree patch"]
+    G --> H["Verification gates"]
+    H --> I["PR publish or recorded failure"]
+    D --> J["Saved review artifacts"]
+```
+
+## Review Flow
 
 1. Collect candidate files with deterministic filtering.
-2. Call the `code-review` skill to inspect those files.
-3. Normalize the raw model output into a more stable result.
+2. Ask the `code-review` skill to inspect only the scoped files.
+3. Normalize raw model output into stable findings.
 4. Group auto-eligible findings into remediation units.
-5. For each eligible group, patch in an isolated worktree, verify, and publish or record failure.
-6. Render terminal output and save run artifacts.
+5. Patch supported groups in isolated worktrees.
+6. Verify, publish, reuse an existing PR, or record failure.
+7. Save terminal output and review artifacts under `.review-runs/`.
 
-Main runtime entrypoint:
+## What To Review
 
-- [.flue/agents/review.ts](/Users/wu36/Code/agents/flue-code-review-agent/.flue/agents/review.ts:1)
-
-Normalization logic:
-
-- [.flue/lib/normalize-review.ts](/Users/wu36/Code/agents/flue-code-review-agent/.flue/lib/normalize-review.ts:1)
-
-Review skill:
-
-- [.agents/skills/code-review/SKILL.md](/Users/wu36/Code/agents/flue-code-review-agent/.agents/skills/code-review/SKILL.md:1)
+- [.flue/agents/review.ts](.flue/agents/review.ts): main Flue runtime entrypoint.
+- [.agents/skills/code-review/SKILL.md](.agents/skills/code-review/SKILL.md): review rubric and output contract.
+- [.flue/lib/normalize-review.ts](.flue/lib/normalize-review.ts): deterministic normalization layer.
+- [.flue/lib/remediation-groups.ts](.flue/lib/remediation-groups.ts): remediation grouping policy.
+- [.flue/lib/remediation-patcher.ts](.flue/lib/remediation-patcher.ts): narrow deterministic patcher.
+- [.flue/lib/remediation-executor.ts](.flue/lib/remediation-executor.ts): verification and publish orchestration.
+- [example/src/code-with-issues.ts](example/src/code-with-issues.ts): fixture used by review/eval artifacts.
 
 ## Review Scope
 
-The agent intentionally narrows the review surface before the model sees files.
+The agent narrows the review surface before the model sees files.
 
 Excluded by default:
 
@@ -59,92 +77,17 @@ Excluded by default:
 - `.flue`
 - `package.json`
 
-Collected files are further restricted to code-related paths in:
+Collected files are further restricted to code-related paths by [.agents/skills/code-review/scripts/collect_files.ts](.agents/skills/code-review/scripts/collect_files.ts).
 
-- [.agents/skills/code-review/scripts/collect_files.ts](/Users/wu36/Code/agents/flue-code-review-agent/.agents/skills/code-review/scripts/collect_files.ts:1)
+## Evals And Artifacts
 
-Current allowlist includes common source extensions such as:
-
-- `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`
-- `.py`, `.sql`, `.go`, `.rs`, `.java`
-- `.c`, `.cc`, `.cpp`, `.cs`, `.rb`, `.php`
-- `Dockerfile`, `Makefile`
-
-## Consistency Strategy
-
-Consistency comes from two layers:
-
-1. A stronger review playbook
-   - confidence calibration
-   - zone-based review routing
-   - named checks for common bug classes
-   - stricter output discipline
-
-2. Deterministic post-processing
-   - category normalization
-   - severity policy overrides for known bug classes
-   - line anchoring heuristics
-   - duplicate/noise filtering
-   - deterministic score calculation
-
-This project intentionally uses evals to catch drift rather than relying on prompt wording alone.
-
-Known patterns in the example fixture are normalized onto a fixed policy:
-
-- SQL injection => `critical`
-- credential logging => `high`
-- off-by-one loop bounds => `high`
-- unchecked fetch response status => `medium`
-
-The final score is derived from normalized findings rather than trusting the raw model score.
-
-## Remediation PR Flow
-
-Supported remediation groups run through a bounded publish pipeline:
-
-1. Create an isolated worktree rooted at the current branch.
-2. Apply a deterministic patch for supported kinds such as `bounds-check` and `input-validation`.
-3. Run verification commands for that group.
-4. Push a remediation branch if verification passes.
-5. Create a PR, or reuse an existing open PR for the same remediation group.
-
-PR dedupe is based on a hidden remediation-group marker in the PR body rather than PR title.
-When a matching open PR already exists, the runtime records `already-open` and prints that URL
-to the terminal instead of creating a duplicate PR.
-
-## Evals
-
-Eval scripts live in:
-
-- [.flue/evals/eval-golden-latest.mjs](/Users/wu36/Code/agents/flue-code-review-agent/.flue/evals/eval-golden-latest.mjs:1)
-- [.flue/evals/eval-remediation-latest.mjs](/Users/wu36/Code/agents/flue-code-review-agent/.flue/evals/eval-remediation-latest.mjs:1)
-- [.flue/evals/eval-stability.mjs](/Users/wu36/Code/agents/flue-code-review-agent/.flue/evals/eval-stability.mjs:1)
-
-Available commands:
-
-```bash
-pnpm run check:types
-pnpm run eval:golden
-pnpm run eval:remediation
-pnpm run eval:stability
-```
-
-What they do:
-
-- `check:types`: runs TypeScript type checking
-- `eval:golden`: validates the latest blessed review run against the deterministic baseline
-- `eval:remediation`: validates the latest blessed remediation plan and execution artifacts
-- `eval:stability`: summarizes variance across saved review runs in `.review-runs`
-
-## Run Artifacts
-
-Each review run writes artifacts under:
+Review runs write artifacts under:
 
 ```text
 .review-runs/<run-id>/
 ```
 
-Typical contents include:
+Typical contents:
 
 - `summary.md`
 - `data/findings.json`
@@ -157,30 +100,19 @@ Remediation-enabled runs may also include:
 - `data/remediation.json`
 - `data/remediation-executions.json`
 
-`remediation-executions.json` records per-group remediation results in a
-`results` array, including publish status, branch name, verification results,
-failure reason, and PR URL when publication succeeds or an existing PR is reused.
-Current statuses include:
+Eval scripts:
 
-- `published`
-- `already-open`
-- `failed`
-- `skipped`
-- `prepared`
+```bash
+pnpm run eval:golden
+pnpm run eval:remediation
+pnpm run eval:stability
+```
 
-Older saved runs may still use the legacy top-level array shape.
-
-Terminal output also includes a remediation summary after the review summary so you can see:
-
-- how many groups were published, reused, failed, or skipped
-- the URL for each created or reused PR
-- the failing step and reason for unsuccessful groups
+These evals compare saved review-run artifacts. They are intentionally separate from CI because they depend on local review runs rather than static repository fixtures.
 
 ## Development Notes
 
-- The review skill is written as a rubric-driven playbook, not a generic free-form prompt.
-- Confidence and severity are separate concepts:
-  confidence decides whether to report a finding at all
-  severity decides how serious it is once it is considered real
-- The runtime should stay general-purpose; fixture-specific expectations belong in evals, not normal output generation.
-- The deterministic patcher is intentionally narrow and fails closed when a supported local pattern is not matched exactly.
+- Keep fixture-specific expectations in evals, not runtime output generation.
+- Keep deterministic patching narrow and conservative.
+- Prefer fewer high-confidence findings over noisy review breadth.
+- Report material correctness, security, reliability, and maintainability issues over style commentary.

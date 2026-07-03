@@ -1,1 +1,3 @@
 .review-runs/
+node_modules/
+tsconfig.tsbuildinfo

@@ -1,17 +1,17 @@
 {
   "name": "flue-code-review-agent",
   "version": "1.0.0",
-  "description": "",
+  "description": "Agentic code review workflow with deterministic normalization, evals, remediation planning, and audited PR publishing.",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "pnpm run check:types",
     "check:types": "tsc -p . --noEmit",
     "eval:stability": "node .flue/evals/eval-stability.mjs",
     "eval:golden": "node .flue/evals/eval-golden-latest.mjs",
     "eval:remediation": "node .flue/evals/eval-remediation-latest.mjs"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Josh Shavers",
+  "license": "MIT",
   "packageManager": "pnpm@10.32.1",
   "dependencies": {
     "@flue/sdk": "^0.3.10",
